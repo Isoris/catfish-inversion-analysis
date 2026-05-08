@@ -1,14 +1,15 @@
-# `local_PCA_z/` — HANDOFF (consolidated layout v1.0, May 2026)
+# `local_PCA_MDS_z/` — HANDOFF (flat layout, May 2026)
 
-> Single canonical folder for path 1 (local-PCA z-blocks) of the
-> inversion-popgen-toolkit. This handoff documents:
-> 1. The **script tree** (this folder)
+> Path 1 (local-PCA z-blocks) of catfish-inversion-analysis. Documents:
+> 1. The **script tree** (this folder, flat layout)
 > 2. The **scratch tree** on LANTA where outputs land
 > 3. The **canonical command** for every step
-> 4. The **conventions** (defaults, naming, directory structure)
+> 4. The **conventions** (defaults, naming, prefix scheme)
 > 5. **What's left** for future sessions
 >
-> Codebase: `inversion-popgen-toolkit` v8.5 / consolidated layout v1.0.
+> All step scripts and SLURM launchers live flat at the top level of this
+> folder, prefixed `STEP_ZO_` (Z Outlier path). The shared config template
+> lives at the repo root: `../00_inversion_config.sh.template`.
 
 ---
 
@@ -16,34 +17,37 @@
 
 ### 1.1 Script tree (this repo)
 
+Flat — no numbered subfolders. Each step's script and its SLURM launcher
+live next to each other, both prefixed `STEP_ZO_`.
+
 ```
-local_PCA_z/
-├── 01_dosage_pca/
-│   ├── 01a_beagle_to_dosage.py            (beagle.gz → dosage + sites)
-│   ├── 01b_local_pca_compute.R            (sliding-window PCA, ARRAY per chrom)
-│   └── 01c_local_pca_merge.R              (assigns global window_ids)
-├── 02_mds/
-│   ├── 02a_mds_compute.R                  (lostruct + cmdscale, ARRAY per focal chrom)
-│   └── 02b_mds_merge.R                    (assembles per_chr + candidate regions)
-├── 03_precomp/
-│   └── 03_precompute_localpca_zblocks.R   (per-chrom features + NN sim_mats, mclapply)
-├── 04_detect_L1/
-│   └── 04_detect_L1_localpca_zblocks.R    (default --nn 80)
-├── 05_plot_L1/
-│   └── 05_plot_L1_localpca_zblocks.R      (default --nn 80)
-├── 06_detect_L2/
-│   └── 06_detect_L2_localpca_zblocks.R    (default --nn 40)
-├── 07_plot_L2/
-│   └── 07_plot_L2_localpca_zblocks.R      (default --nn 80 chrom + --nn_l2 40 inside)
-├── 08_atlas_json/
-│   ├── 08a_build_sample_metadata.R        (bamlist + ngsRelate + ancestry → ONE TSV)
-│   └── 08b_export_atlas_json_localpca_zblocks.R
-├── 99_launchers/                           (SLURM wrappers + one-shot driver)
-├── 99_legacy/                              (retired _legacy.R + monolithic versions)
-├── 99_docs/                                (PER_STEP_NOTES.md, schema specs)
-├── _to_be_reorganized/                     (path 2 + path 3 code, NOT YET refactored)
-├── README.md
-└── HANDOFF.md                              (this file)
+catfish-inversion-analysis/
+├── 00_inversion_config.sh.template          (shared across all 3 paths)
+├── local_PCA_MDS_z/                         (this folder, path 1)
+│   ├── STEP_ZO_01a_beagle_to_dosage.py      (beagle.gz → dosage + sites)
+│   ├── STEP_ZO_01a_LAUNCH_beagle_to_dosage.slurm
+│   ├── STEP_ZO_01b_local_pca_compute.R      (sliding-window PCA, ARRAY per chrom)
+│   ├── STEP_ZO_01b_LAUNCH_local_pca_compute.slurm
+│   ├── STEP_ZO_01c_local_pca_merge.R        (assigns global window_ids)
+│   ├── STEP_ZO_01c_LAUNCH_local_pca_merge.slurm
+│   ├── STEP_ZO_02a_mds_compute.R            (lostruct + cmdscale, ARRAY per focal chrom)
+│   ├── STEP_ZO_02a_LAUNCH_mds_compute.slurm
+│   ├── STEP_ZO_02b_mds_merge.R              (assembles per_chr + candidate regions)
+│   ├── STEP_ZO_02b_LAUNCH_mds_merge.slurm
+│   ├── STEP_ZO_03_precompute.R              (per-chrom features + NN sim_mats, mclapply)
+│   ├── STEP_ZO_03_LAUNCH_precompute.slurm
+│   ├── STEP_ZO_04_detect_L1.R               (default --nn 80)
+│   ├── STEP_ZO_05_plot_L1.R                 (default --nn 80)
+│   ├── STEP_ZO_06_detect_L2.R               (default --nn 40)
+│   ├── STEP_ZO_07_plot_L2.R                 (default --nn 80 chrom + --nn_l2 40 inside)
+│   ├── STEP_ZO_08a_build_sample_metadata.R  (bamlist + ngsRelate + ancestry → ONE TSV)
+│   ├── STEP_ZO_08b_export_atlas_json.R      (per-chrom JSON for the scrubber)
+│   ├── STEP_ZO_04to08b_run_one_chrom.sh     (driver chains 04→08b for one chrom)
+│   ├── docs/PER_STEP_NOTES.md
+│   ├── README.md
+│   └── HANDOFF.md                           (this file)
+├── local_PCA_MDS_thetapi/                  (path 2, sibling — STEP_TR_* prefix)
+└── local_PCA_MDS_GHSL/                     (path 3, sibling — STEP_GH_* prefix)
 ```
 
 ### 1.2 Scratch tree on LANTA
@@ -128,10 +132,10 @@ you have been; the output should land in `02_dosage_sites/`.
 
 ```bash
 # Stage 1: one chromosome per array task
-sbatch --array=0-27 99_launchers/01b_LAUNCH_local_pca_compute.slurm chrom.list
+sbatch --array=0-27 STEP_ZO_01b_LAUNCH_local_pca_compute.slurm chrom.list
 
 # Stage 2: merge (assigns global window_ids)
-sbatch --dependency=afterok:<JOB01b> 99_launchers/01c_LAUNCH_local_pca_merge.slurm
+sbatch --dependency=afterok:<JOB01b> STEP_ZO_01c_LAUNCH_local_pca_merge.slurm
 ```
 
 Produces in `path_localpca_zblocks/02_dense_registry/`:
@@ -143,10 +147,10 @@ Produces in `path_localpca_zblocks/02_dense_registry/`:
 
 ```bash
 # Stage 1: one focal chromosome per array task (~12h walltime)
-sbatch --array=0-27 99_launchers/02a_LAUNCH_mds_compute.slurm chrom.list
+sbatch --array=0-27 STEP_ZO_02a_LAUNCH_mds_compute.slurm chrom.list
 
 # Stage 2: merge into final mds.rds with $per_chr structure
-sbatch --dependency=afterok:<JOB02a> 99_launchers/02b_LAUNCH_mds_merge.slurm
+sbatch --dependency=afterok:<JOB02a> STEP_ZO_02b_LAUNCH_mds_merge.slurm
 ```
 
 Produces in `path_localpca_zblocks/03_mds/`:
@@ -161,7 +165,7 @@ inv_likeness windows so foreign inversions don't leak into "background").
 ### Step 03 — precompute (per-chrom features + NN sim_mats)
 
 ```bash
-sbatch --dependency=afterok:<JOB02b> 99_launchers/03_LAUNCH_precompute_localpca_zblocks.slurm
+sbatch --dependency=afterok:<JOB02b> STEP_ZO_03_LAUNCH_precompute.slurm
 ```
 
 Produces in `path_localpca_zblocks/04_precomp/`:
@@ -171,7 +175,7 @@ Produces in `path_localpca_zblocks/04_precomp/`:
 
 **Tune NN scales saved:**
 ```bash
-NN_SIM_SCALES="40,80,160,320" sbatch 99_launchers/03_LAUNCH_precompute_localpca_zblocks.slurm
+NN_SIM_SCALES="40,80,160,320" sbatch STEP_ZO_03_LAUNCH_precompute.slurm
 ```
 
 ### Steps 04–08b — interactive per chromosome
@@ -181,7 +185,7 @@ The bulk-compute steps are 01–03. Steps 04–08b are tuned interactively
 defaults baked in. The driver:
 
 ```bash
-bash 99_launchers/04to08b_run_one_chrom.sh C_gar_LG28
+bash STEP_ZO_04to08b_run_one_chrom.sh C_gar_LG28
 ```
 
 Or call individual scripts with the canonical-mode flags:
@@ -189,7 +193,7 @@ Or call individual scripts with the canonical-mode flags:
 ```bash
 # 04 — L1 detect (defaults: --nn 80, boundary_W 5, boundary_offset 5,
 #                         boundary_min_dist 30, validator_mode grow)
-Rscript 04_detect_L1/04_detect_L1_localpca_zblocks.R \
+Rscript STEP_ZO_04_detect_L1.R \
   --precomp_dir <SCRATCH>/path_localpca_zblocks/04_precomp/precomp \
   --chr         C_gar_LG28 \
   --outdir      <SCRATCH>/path_localpca_zblocks/05_L1 \
@@ -200,7 +204,7 @@ Rscript 04_detect_L1/04_detect_L1_localpca_zblocks.R \
 
 ```bash
 # 05 — L1 plot (default --nn 80, --boundary_filter stable)
-Rscript 05_plot_L1/05_plot_L1_localpca_zblocks.R \
+Rscript STEP_ZO_05_plot_L1.R \
   --precomp_dir <SCRATCH>/path_localpca_zblocks/04_precomp/precomp \
   --L1_dir      <SCRATCH>/path_localpca_zblocks/05_L1 \
   --chr         C_gar_LG28 \
@@ -210,7 +214,7 @@ Rscript 05_plot_L1/05_plot_L1_localpca_zblocks.R \
 
 ```bash
 # 06 — L2 detect (default --nn 40, with quadrant validator)
-Rscript 06_detect_L2/06_detect_L2_localpca_zblocks.R \
+Rscript STEP_ZO_06_detect_L2.R \
   --precomp_dir <SCRATCH>/path_localpca_zblocks/04_precomp/precomp \
   --L1_dir      <SCRATCH>/path_localpca_zblocks/05_L1 \
   --chr         C_gar_LG28 \
@@ -225,7 +229,7 @@ Rscript 06_detect_L2/06_detect_L2_localpca_zblocks.R \
 
 ```bash
 # 07 — L2 plot (default --nn 80 chrom-wide + --nn_l2 40 inside-segment)
-Rscript 07_plot_L2/07_plot_L2_localpca_zblocks.R \
+Rscript STEP_ZO_07_plot_L2.R \
   --precomp_dir <SCRATCH>/path_localpca_zblocks/04_precomp/precomp \
   --L1_dir      <SCRATCH>/path_localpca_zblocks/05_L1 \
   --L2_dir      <SCRATCH>/path_localpca_zblocks/07_L2 \
@@ -236,7 +240,7 @@ Rscript 07_plot_L2/07_plot_L2_localpca_zblocks.R \
 
 ```bash
 # 08a — build sample metadata (run ONCE, genome-wide)
-Rscript 08_atlas_json/08a_build_sample_metadata.R \
+Rscript STEP_ZO_08a_build_sample_metadata.R \
   --bamlist    <path>/list_of_samples_one_per_line_same_bamfile_list.tsv \
   --pairs      <path>/catfish_226_for_natora.txt \
   --theta_cutoff 0.177 \
@@ -246,7 +250,7 @@ Rscript 08_atlas_json/08a_build_sample_metadata.R \
 
 ```bash
 # 08b — export atlas JSON per chromosome
-Rscript 08_atlas_json/08b_export_atlas_json_localpca_zblocks.R \
+Rscript STEP_ZO_08b_export_atlas_json.R \
   --precomp_dir     <SCRATCH>/path_localpca_zblocks/04_precomp/precomp \
   --L1_dir          <SCRATCH>/path_localpca_zblocks/05_L1 \
   --L2_dir          <SCRATCH>/path_localpca_zblocks/07_L2 \
@@ -342,22 +346,19 @@ Legacy `--bamlist` + `--pairs` + `--samples` flags still work in 08b for
 power users; if `--sample_metadata` is given it short-circuits the legacy
 logic.
 
-### 3.6 Stage1/stage2 → compute/merge
+### 3.6 Naming history
 
-Stage1+stage2 was infrastructure (parallelize across chromosomes via SLURM
-array, then merge). Renamed for clarity:
+Two earlier rename passes are baked into the current `STEP_ZO_` names:
 
-- `01b_local_pca_compute.R` (was `01c_local_pca_stage1.R`)
-- `01c_local_pca_merge.R`   (was `01d_local_pca_stage2.R`)
-- `02a_mds_compute.R`       (was `02a_mds_stage1.R`)
-- `02b_mds_merge.R`         (was `02b_mds_stage2.R`)
+- **stage1/stage2 → compute/merge** for the `01b/01c` and `02a/02b`
+  pairs (the SLURM-array + post-array merge halves).
+- **overlay → plot** for `05_plot_L1` and `07_plot_L2` (matches the
+  `detect_*` naming).
 
-### 3.7 Overlay → plot
-
-`05_overlay_L1.R` → `05_plot_L1_localpca_zblocks.R`
-`07_overlay_L2.R` → `07_plot_L2_localpca_zblocks.R`
-
-Same naming convention as the detect scripts, easier to grep.
+Both were folded into the current scheme during the May-2026 cleanup
+that flattened the tree and added the `STEP_ZO_` prefix. No script names
+in this repo still carry the old `_stage1` / `_stage2` / `_overlay` /
+`_localpca_zblocks` tags.
 
 ---
 
@@ -394,47 +395,59 @@ sim_mats regardless of what the feature was).
 
 ### High priority
 
-1. **NEXT SESSION — reorganize path 2 (θπ).** The user will upload
-   `2f_theta_discovery/` for a focused session. Read
-   `_to_be_reorganized/2f_theta_discovery/HANDOFF.md` first — it
-   recommends Option B (lighter touch: rename + rewire scratch paths,
-   don't unpack the everything-script). The user also has an open
-   question on whether to lift `04_detect_L1` / `06_detect_L2` /
-   `05_plot_L1` / `07_plot_L2` into a `_shared_detect_plot/` folder
-   callable from all three paths — see README §14.1. Discuss before
-   touching anything.
+1. **Path 2 (θπ) — finalize the v5 drafts at
+   `local_PCA_MDS_thetapi/v5_drafts/`.** TR_C / TR_D / TR_C_plot /
+   TR_D_plot are verbatim copies of `STEP_ZO_04..07` and should run on a
+   theta-pi precomp out of the box. TR_E (carrier classification) and
+   TR_F (per-sample + band-mean CUSUM) are exploratory — needs a
+   real-data dry-run on LG28 before flattening into top-level
+   `STEP_TR_*` scripts at the sibling folder root.
 
-2. **`01a_LAUNCH_beagle_to_dosage.slurm`** — still uses old paths, predates
-   the consolidated layout. Update its config sourcing to match the other
-   launchers.
+2. **`STEP_ZO_01a_LAUNCH_beagle_to_dosage.slurm`** — predates the flatten;
+   its config sourcing may still reference an old `_shared/` path. Update
+   to source `../00_inversion_config.sh` (or your site-local copy of
+   the template) instead.
 
-3. **Reorganize path 3 (`_to_be_reorganized/2e_ghsl_discovery/`)** the same
-   way. Likely more involved because `STEP_C04_snake3_ghsl_v6.R` looks like
-   a monolithic compute script that may combine multiple canonical steps.
+3. **Path 3 (GHSL) — flatten next.** Apply the same `STEP_GH_*` prefix
+   scheme used here. `STEP_C04_snake3_ghsl_v6.R` may be a monolith that
+   needs splitting into the canonical 01–08b skeleton.
 
 ### Medium priority
 
-4. **Sample metadata script (08a) — test on real LANTA data.** The script
-   was newly written for this consolidation; it parses cleanly but has not
-   been run end-to-end on the real bamlist + ngsRelate output. Verify
-   against an existing manually-built sample_metadata before trusting it.
+4. **`STEP_ZO_08a_build_sample_metadata.R` — test on real LANTA data.**
+   Parses cleanly but has not been run end-to-end on the real bamlist +
+   ngsRelate output. Verify against an existing manually-built
+   sample_metadata before trusting it.
 
-5. **Stub the `_shared/00_inversion_config.sh` template.** A skeleton
-   exists in the bundle (`_shared/00_inversion_config.sh.template`), but
-   the real values (paths, env names, sample counts) need to be plugged in
-   from your live config.
+5. **Plug real values into `00_inversion_config.sh.template`** at the
+   repo root. The template has the right shape but every path / env name
+   / sample count is still a placeholder. `BASE`, `SCRATCH_ROOT`, and the
+   `_shared/` location depend on your cluster setup.
 
 ### Low priority / deferred
 
-6. **Genome-wide rollout SLURM array for steps 04-08b.** Currently steps
-   04-07 are interactive; the `04to08b_run_one_chrom.sh` driver runs them
-   for one chrom at a time. A SLURM array launcher that runs the driver
-   in parallel across 28 chromosomes would be useful for genome-wide
-   atlas builds.
+6. **Genome-wide rollout SLURM array for steps 04–08b.** Currently steps
+   04–07 are interactive; the `STEP_ZO_04to08b_run_one_chrom.sh` driver
+   runs them for one chrom at a time. A SLURM array launcher that runs
+   the driver in parallel across 28 chromosomes would be useful for
+   genome-wide atlas builds.
 
-7. **The legacy `01a_beagle_to_dosage.py` script should be reviewed.**
-   Output naming (`<chr>.dosage.tsv.gz` + `<chr>.sites.tsv.gz`) matches
-   the new convention, so it should be fine, but worth a sanity pass.
+7. **`STEP_ZO_01a_beagle_to_dosage.py` sanity pass.** Output naming
+   (`<chr>.dosage.tsv.gz` + `<chr>.sites.tsv.gz`) matches the new
+   convention, so it should be fine, but worth a quick review.
+
+### Done in the May-2026 cleanup session
+
+- Numbered subfolders (`01_dosage_pca/` … `08_atlas_json/`) removed; all
+  scripts flattened to top level with the `STEP_ZO_` prefix.
+- `99_launchers/` and `99_legacy/` removed; launchers also flattened
+  alongside their scripts. `99_docs/` renamed to `docs/`.
+- Long file-name suffix `_localpca_zblocks` dropped from script names
+  (the prefix already says it).
+- `00_inversion_config.sh.template` moved out to the repo root for
+  sharing with sibling paths.
+- Internal `${SCRIPT_DIR}/<old-folder>/<old-name>` references in every
+  launcher patched to point at the new flat names.
 
 ---
 
