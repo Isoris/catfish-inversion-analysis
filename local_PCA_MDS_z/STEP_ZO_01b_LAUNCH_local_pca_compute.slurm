@@ -59,7 +59,7 @@ cat <<EOF
 ================================================================
 EOF
 
-"${RSCRIPT_BIN}" "${SCRIPT_DIR}/01_dosage_pca/01b_local_pca_compute.R" \
+"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_01b_local_pca_compute.R" \
   --dosage_dir "${DOSAGE_DIR}" \
   --outdir     "${OUTDIR}" \
   --chrom      "${CHROM}" \

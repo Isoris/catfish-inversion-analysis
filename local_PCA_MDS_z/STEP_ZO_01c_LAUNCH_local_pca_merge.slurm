@@ -55,7 +55,7 @@ cat <<EOF
 ================================================================
 EOF
 
-"${RSCRIPT_BIN}" "${SCRIPT_DIR}/01_dosage_pca/01c_local_pca_merge.R" \
+"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_01c_local_pca_merge.R" \
   --outdir "${OUTDIR}"
 
 echo "[DONE] 01c — $(date)"

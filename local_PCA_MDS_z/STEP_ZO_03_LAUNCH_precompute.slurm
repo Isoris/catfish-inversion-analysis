@@ -65,7 +65,7 @@ else
   echo "[03] WARNING: DOSAGE_DIR not set — dosage het CV columns will be NA"
 fi
 
-"${RSCRIPT_BIN}" "${SCRIPT_DIR}/03_precomp/03_precompute_localpca_zblocks.R" \
+"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_03_precompute.R" \
   "${MDS_PREFIX}" \
   "${OUTDIR}" \
   "${DOSAGE_ARG[@]}"

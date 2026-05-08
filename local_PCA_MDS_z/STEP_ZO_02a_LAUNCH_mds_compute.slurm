@@ -63,7 +63,7 @@ cat <<EOF
 ================================================================
 EOF
 
-"${RSCRIPT_BIN}" "${SCRIPT_DIR}/02_mds/02a_mds_compute.R" \
+"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_02a_mds_compute.R" \
   --rds_dir   "${RDS_DIR}" \
   --outdir    "${OUTDIR}" \
   --outprefix "${OUTPREFIX}" \

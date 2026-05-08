@@ -46,7 +46,7 @@ cat <<EOF
 ================================================================
 EOF
 
-"${RSCRIPT_BIN}" "${SCRIPT_DIR}/02_mds/02b_mds_merge.R" \
+"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_02b_mds_merge.R" \
   --tmpdir      "${TMPDIR_IN}" \
   --outprefix   "${OUTPREFIX}" \
   --mds_mode    "${MDS_MODE}" \

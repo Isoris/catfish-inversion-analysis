@@ -45,7 +45,7 @@ echo "============================================================"
 # ── Step 04: detect L1 (default --nn 80) ─────────────────────────────────────
 echo ""
 echo "=== 04 detect_L1 (nn80) ==="
-"${RSCRIPT_BIN}" "${SCRIPT_DIR}/04_detect_L1/04_detect_L1_localpca_zblocks.R" \
+"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_04_detect_L1.R" \
   --precomp_dir "${PRECOMP_DIR}" \
   --chr         "${CHR}" \
   --outdir      "${L1_DIR}" \
@@ -56,7 +56,7 @@ echo "=== 04 detect_L1 (nn80) ==="
 # ── Step 05: plot L1 ─────────────────────────────────────────────────────────
 echo ""
 echo "=== 05 plot_L1 (nn80) ==="
-"${RSCRIPT_BIN}" "${SCRIPT_DIR}/05_plot_L1/05_plot_L1_localpca_zblocks.R" \
+"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_05_plot_L1.R" \
   --precomp_dir     "${PRECOMP_DIR}" \
   --L1_dir          "${L1_DIR}" \
   --chr             "${CHR}" \
@@ -67,7 +67,7 @@ echo "=== 05 plot_L1 (nn80) ==="
 # ── Step 06: detect L2 (default --nn 40) ─────────────────────────────────────
 echo ""
 echo "=== 06 detect_L2 (nn40) ==="
-"${RSCRIPT_BIN}" "${SCRIPT_DIR}/06_detect_L2/06_detect_L2_localpca_zblocks.R" \
+"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_06_detect_L2.R" \
   --precomp_dir "${PRECOMP_DIR}" \
   --L1_dir      "${L1_DIR}" \
   --chr         "${CHR}" \
@@ -83,7 +83,7 @@ echo "=== 06 detect_L2 (nn40) ==="
 # ── Step 07: plot L2 ─────────────────────────────────────────────────────────
 echo ""
 echo "=== 07 plot_L2 (nn80 chrom + nn40 inside) ==="
-"${RSCRIPT_BIN}" "${SCRIPT_DIR}/07_plot_L2/07_plot_L2_localpca_zblocks.R" \
+"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_07_plot_L2.R" \
   --precomp_dir     "${PRECOMP_DIR}" \
   --L1_dir          "${L1_DIR}" \
   --L2_dir          "${L2_DIR}" \
@@ -100,7 +100,7 @@ if [[ ! -f "${SAMPLE_META}" ]]; then
   echo "[WARN] Skipping JSON export for ${CHR}."
   exit 0
 fi
-"${RSCRIPT_BIN}" "${SCRIPT_DIR}/08_atlas_json/08b_export_atlas_json_localpca_zblocks.R" \
+"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_08b_export_atlas_json.R" \
   --precomp_dir     "${PRECOMP_DIR}" \
   --L1_dir          "${L1_DIR}" \
   --L2_dir          "${L2_DIR}" \
