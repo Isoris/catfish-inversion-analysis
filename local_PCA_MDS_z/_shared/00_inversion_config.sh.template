@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# =============================================================================
+# 00_inversion_config.sh — TEMPLATE
+#
+# Copy this file to ${SCRATCH}/inversion_localpca_v8/_shared/00_inversion_config.sh
+# and fill in real values for your environment.
+#
+# Sourced by every SLURM launcher via:
+#   set -a; source "${CONFIG}"; set +a
+# =============================================================================
+
+# ── Project root ─────────────────────────────────────────────────────────────
+# Where the inversion-popgen-toolkit repo + scratch outputs live.
+export BASE="/scratch/lt200308-agbsci/Quentin_project_KEEP_2026-02-04"
+
+# ── Tool paths ───────────────────────────────────────────────────────────────
+export RSCRIPT_BIN="$(which Rscript)"
+
+# ── Scratch tree root ────────────────────────────────────────────────────────
+# All path 1/2/3 outputs land under here. See HANDOFF §1.2 for the full layout.
+export SCRATCH_ROOT="${BASE}/inversion_localpca_v8"
+
+# ── Per-path defaults ────────────────────────────────────────────────────────
+# These can be overridden by individual launchers. Listed here so the
+# whole tree is grokable from one file.
+export DOSAGE_DIR="${SCRATCH_ROOT}/02_dosage_sites"
+export PESTPG_DIR="${SCRATCH_ROOT}/03_pestPG"
+export GHSL_DIR="${SCRATCH_ROOT}/04_clair3_phased_GHSL"
+
+# Path 1 outputs
+export PATH1_ROOT="${SCRATCH_ROOT}/path_localpca_zblocks"
+export MDS_DIR="${PATH1_ROOT}/03_mds"
+export PRECOMP_DIR="${PATH1_ROOT}/04_precomp"
+export L1_DIR="${PATH1_ROOT}/05_L1"
+export L1_PLOT_DIR="${PATH1_ROOT}/06_L1_plots"
+export L2_DIR="${PATH1_ROOT}/07_L2"
+export L2_PLOT_DIR="${PATH1_ROOT}/08_L2_plots"
+export JSON_DIR="${PATH1_ROOT}/09_atlas_json"
+
+# Shared
+export SHARED_DIR="${SCRATCH_ROOT}/_shared"
+export SAMPLE_META="${SHARED_DIR}/sample_metadata.tsv"
+export REF_FASTA="${SHARED_DIR}/reference/fClaHyb_Gar_LG.fa"
+
+# ── NN smoothing ─────────────────────────────────────────────────────────────
+# Default scales saved by step 03 precompute. Override via env to save fewer.
+# Example trim:   NN_SIM_SCALES="40,80,160,320"
+export NN_SIM_SCALES="${NN_SIM_SCALES:-20,40,80,120,160,200,240,320}"
+
+# ── Sample-metadata defaults ─────────────────────────────────────────────────
+export THETA_CUTOFF="${THETA_CUTOFF:-0.177}"   # Manichaikul 1st-deg
+
+# ── Cohort sanity ────────────────────────────────────────────────────────────
+# 226-sample pure C. gariepinus hatchery cohort; 81 NAToRA-pruned unrelated.
+export N_SAMPLES="${N_SAMPLES:-226}"
+export N_PRUNED="${N_PRUNED:-81}"
+export N_CHROMS="${N_CHROMS:-28}"
