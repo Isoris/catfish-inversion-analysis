@@ -20,23 +20,35 @@
 set -euo pipefail
 
 # ── Project paths ─────────────────────────────────────────────────────────
-export BASE="/scratch/lt200308-agbsci/Quentin_project_KEEP_2026-02-04"
+# LOCAL WSL run on /mnt/e (scratch / LANTA paths preserved below as comments).
+# Original LANTA base:
+#   export BASE="/scratch/lt200308-agbsci/Quentin_project_KEEP_2026-02-04"
+export BASE="/mnt/e"
+
 # Repo layout (post April-2026 reorganization):
 #   ${BASE}/inversion-popgen-toolkit/inversion_modules/phase_2_discovery/2f_theta_discovery/
 # CODEBASE points at the inversion_modules root (where phase_2_discovery/ lives).
-# To use the legacy v8.5 layout, override on the command line:
-#   CODEBASE=$BASE/inversion_codebase_v8.5 source 00_theta_config.sh
-export CODEBASE="${CODEBASE:-${BASE}/inversion-popgen-toolkit/inversion_modules}"
-export THETA_DISC_DIR="${CODEBASE}/phase_2_discovery/2f_theta_discovery"
-export OUTROOT="${BASE}/phase_2_outputs/2f_theta_discovery"
+# Locally we run directly out of catfish-inversion-analysis/, so CODEBASE
+# falls back to the directory of this config.
+export CODEBASE="${CODEBASE:-/mnt/c/Users/quent/Desktop/catfish-inversion-analysis}"
+export THETA_DISC_DIR="${CODEBASE}/local_PCA_MDS_theta_pi"
+# Outputs go into the inversion tree's theta-pi local-PCA slot. The atlas's
+# registry root `precomp_local_pca_mds_theta_pi` reads from the same dir.
+export OUTROOT="${BASE}/results_inversions/local_PCA_MDS_theta_pi"
 
-# ── Reference / sample inputs (shared with sibling 2a/2e streams) ─────────
-export REF="${BASE}/01_ref/Cgar_v2.fa"
-export ANC="${BASE}/01_ref/Cgar_v2.fa"          # using ref as ancestor (folded SFS)
-export SAMPLES_IND="${BASE}/01_inputs_check/samples.ind"
-export SAMPLE_LIST="${BASE}/01_inputs_check/samples_226_pure_gariepinus.txt"
-export BAM_MANIFEST="${BASE}/pa_roary_results/00_manifests/sample_bam_minimap2_vs_P99TLENMAPQ30.tsv"
-export CALLABLE_SITES="${BASE}/01_inputs_check/callable_sites.bed.gz"
+# ── Reference / sample inputs (cohort-wide, in /mnt/e/_shared) ────────────
+# Original LANTA paths:
+#   REF="${BASE}/01_ref/Cgar_v2.fa"
+#   SAMPLES_IND="${BASE}/01_inputs_check/samples.ind"
+#   SAMPLE_LIST="${BASE}/01_inputs_check/samples_226_pure_gariepinus.txt"
+#   BAM_MANIFEST="${BASE}/pa_roary_results/00_manifests/sample_bam_minimap2_vs_P99TLENMAPQ30.tsv"
+#   CALLABLE_SITES="${BASE}/01_inputs_check/callable_sites.bed.gz"
+export REF="${BASE}/_shared/reference/fClaHyb_Gar_LG.fa"
+export ANC="${BASE}/_shared/reference/fClaHyb_Gar_LG.fa"   # ref-as-ancestor (folded SFS)
+export SAMPLES_IND="${BASE}/_shared/samples.ind"
+export SAMPLE_LIST="${BASE}/_shared/samples.ind"            # local: same 226-id list
+export BAM_MANIFEST="${BASE}/_shared/bamlist_qcpass.txt"    # only consumed by upstream ANGSD; STEP_TR_A/B ignore it
+export CALLABLE_SITES="${BASE}/_shared/callable_regions.rf" # ANGSD region file (.rf), not .bed.gz; same info, not used by STEP_TR_A/B
 
 # ── θπ source (already exists from MODULE_3 het/ROH stream) ───────────────
 # These are produced upstream by 02_run_heterozygosity.sh per sample:
@@ -78,14 +90,24 @@ export CALLABLE_SITES="${BASE}/01_inputs_check/callable_sites.bed.gz"
 # To revert to the dosage grid (if the per-sample lines panel is too
 # noisy on real data): set PESTPG_SCALE="win50000.step10000" and
 # uncomment DOSAGE_WIN_BED_DIR usage in STEP_TR00b. One-line change.
-export PESTPG_DIR="${BASE}/het_roh/02_heterozygosity/03_theta/multiscale"
+#
+# Original LANTA paths:
+#   PESTPG_DIR="${BASE}/het_roh/02_heterozygosity/03_theta/multiscale"
+#   THETA_TSV_DIR="${BASE}/het_roh/02_heterozygosity/05_aggregated"
+#
+# Local: pestPG canonical home is results_diversity/03_theta_pi (4 scales x
+# 226 samples = 904 files; the diversity-analysis Module 03_theta_pi
+# producer outputs them here). PESTPG_GLOB selects the win10000.step2000
+# subset at read time.
+export PESTPG_DIR="${BASE}/results_diversity/03_theta_pi"
 export PESTPG_SCALE="win10000.step2000"
 export PESTPG_GLOB="*.${PESTPG_SCALE}.pestPG"
-export THETA_TSV_DIR="${BASE}/het_roh/02_heterozygosity/05_aggregated"
-# After STEP_TR00b runs, the per-sample × per-θπ-window matrix lives at:
+# Intermediate per-sample x per-window matrices land in the inversion path's
+# 01_local_pca slot (it's the input to local PCA in STEP_TR_B):
 #   ${THETA_TSV_DIR}/theta_native.<CHROM>.<SCALE>.tsv.gz
 # Columns: sample  chrom  window_idx  start_bp  end_bp  theta_pi  n_sites
 # (window_idx is 0-based; this is the θπ-NATIVE grid, NOT the dosage grid)
+export THETA_TSV_DIR="${OUTROOT}/01_local_pca"
 
 # ── Dosage scrubber's window grid (kept for fallback / per-candidate Phase 4) ─
 # Used by:
@@ -96,7 +118,12 @@ export THETA_TSV_DIR="${BASE}/het_roh/02_heterozygosity/05_aggregated"
 # Per-chromosome BED produced by 2a_local_pca/STEP09b_dense_window_registry.R.
 # Each chromosome has its own subfolder containing windows.bed with columns:
 #   chrom  start_bp  end_bp  window_idx  n_snps
-export DOSAGE_WIN_BED_DIR="${CODEBASE}/phase_2_discovery/2a_local_pca"
+# Not needed when PESTPG_SCALE is the native win10000.step2000 grid; only
+# matters for the dosage-grid fallback path. Leave pointing at the dosage
+# scrubber's window-bed dir under the inversion tree.
+# Original LANTA path:
+#   DOSAGE_WIN_BED_DIR="${CODEBASE}/phase_2_discovery/2a_local_pca"
+export DOSAGE_WIN_BED_DIR="${BASE}/results_inversions/local_PCA_MDS_z/01_local_pca"
 
 # ── Cursor sync mechanism (v4 design) ─────────────────────────────────────
 # Because θπ now uses its own native window grid (not the dosage grid), the
@@ -134,7 +161,12 @@ export SILHOUETTE_MIN=0.45                      # L2 silhouette filter
 export ENV_MIN_WINDOWS=5                        # min windows for L2 to be retained
 
 # ── Compute / SLURM ───────────────────────────────────────────────────────
-export RSCRIPT="/lustrefs/disk/project/lt200308-agbsci/13-programs/mambaforge/envs/assembly/bin/Rscript"
+# Original LANTA Rscript path:
+#   RSCRIPT="/lustrefs/disk/project/lt200308-agbsci/13-programs/mambaforge/envs/assembly/bin/Rscript"
+# Local: rely on whichever Rscript is on PATH (override per-shell with
+# `RSCRIPT=$(which Rscript)`). Falls back to a sane default if PATH lookup
+# fails so the config still sources cleanly.
+export RSCRIPT="${RSCRIPT:-$(command -v Rscript || echo /usr/bin/Rscript)}"
 export MAMBA_ENV="assembly"
 export SLURM_ACCOUNT="lt200308"
 export SLURM_PARTITION="compute"
@@ -142,7 +174,8 @@ export SLURM_TIME="04:00:00"
 export SLURM_MEM="32G"
 export SLURM_CPUS=4
 # 28 chromosomes — array goes 1..28, one chrom per task. Same pattern as
-# MODULE_5A2's STEP09b/STEP10v2 chromosome arrays.
+# MODULE_5A2's STEP09b/STEP10v2 chromosome arrays. Locally you'd loop in
+# bash instead of submitting via sbatch.
 export SLURM_ARRAY="1-28"
 
 # ── Chromosomes ───────────────────────────────────────────────────────────
@@ -163,14 +196,18 @@ export CHROM_LIST=("C_gar_LG01" "C_gar_LG02" "C_gar_LG03" "C_gar_LG04"
 # Atlas precomp loader recognizes these layer keys at
 # pca_scrubber_v4.html detectSchemaAndLayers() lines 24316–24327.
 # No atlas-side change needed for layer detection.
-export JSON_OUT_DIR="${OUTROOT}/json_out"
+#
+# 04_atlas_json/ is the standardized atlas-JSON slot under the inversion
+# path tree (see master_config.yaml > precomp_local_pca_mds_theta_pi root).
+export JSON_OUT_DIR="${OUTROOT}/04_atlas_json"
 
 # Legacy per-layer dirs (used by the archived STEP_TR01 long-format
 # emitter; kept for the popstats page and other non-page-12 consumers
-# that still expect three separate files).
-export OUT_PER_WINDOW_DIR="${OUTROOT}/01_per_window"
-export OUT_LOCAL_PCA_DIR="${OUTROOT}/02_local_pca"
-export OUT_ENVELOPES_DIR="${OUTROOT}/03_envelopes"
+# that still expect three separate files). Mapped onto the inversion
+# tree's standardized 01/02/03 slots.
+export OUT_PER_WINDOW_DIR="${OUTROOT}/01_local_pca"
+export OUT_LOCAL_PCA_DIR="${OUTROOT}/01_local_pca"
+export OUT_ENVELOPES_DIR="${OUTROOT}/03_per_chrom"
 
 # ── Logging ───────────────────────────────────────────────────────────────
 export LOG_DIR="${OUTROOT}/logs"
