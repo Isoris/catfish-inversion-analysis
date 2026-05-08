@@ -46,7 +46,11 @@ suppressPackageStartupMessages({ library(data.table) })
 
 PAD                  <- 1L
 NPC                  <- 4L     # was 2 in v4; user wanted >= 4
-K_MDS                <- 5L     # number of MDS axes to keep (matches z-blocks SEED_MDS_AXES)
+K_MDS                <- 20L    # MDS axes to compute/store (matches z-blocks 02a MDS_DIMS).
+                               # Only the first SEED_MDS_AXES (= 5, hardcoded below) feed
+                               # `max_abs_z`; the higher axes are kept for atlas / downstream.
+SEED_MDS_AXES        <- 5L     # # of MDS axes whose z-scores contribute to max_abs_z
+                               # (matches z-blocks 03_precompute SEED_MDS_AXES).
 SIM_BAND_HALF        <- 200L
 SIM_N_FULL_THRESHOLD <- 6000L
 NN_SIM_SCALES        <- c(20, 40, 80, 120, 160, 200, 240, 320)
@@ -311,7 +315,10 @@ for (chrom in CHROM_LIST) {
     }
   }
 
-  # MDS-axis robust z-scores (z-blocks definition; STEP_TR_C/D consume max_abs_z).
+  # MDS-axis robust z-scores. We compute K_MDS columns for parity with
+  # z-blocks (default 20 axes stored in the precomp); but only the first
+  # SEED_MDS_AXES (= 5, matches z-blocks 03_precompute) feed max_abs_z —
+  # which is what 04_detect_L1 / 06_detect_L2 actually consume.
   mds_z <- matrix(NA_real_, nrow = n_win, ncol = K_MDS)
   for (k in seq_len(K_MDS)) {
     v <- mds_mat[, k]
@@ -325,10 +332,11 @@ for (chrom in CHROM_LIST) {
       }
     }
   }
-  max_abs_z <- apply(mds_z, 1, function(r) {
+  z_for_max <- mds_z[, seq_len(min(SEED_MDS_AXES, K_MDS)), drop = FALSE]
+  max_abs_z <- apply(z_for_max, 1, function(r) {
     r <- r[is.finite(r)]; if (length(r) == 0) NA_real_ else max(abs(r))
   })
-  max_z_axis <- apply(mds_z, 1, function(r) {
+  max_z_axis <- apply(z_for_max, 1, function(r) {
     a <- which.max(abs(r)); if (length(a) == 0) NA_integer_ else as.integer(a)
   })
 
