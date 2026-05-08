@@ -1,135 +1,187 @@
-# v5 pipeline drafts — theta-pi local-PCA + MDS + CUSUM
+# v5 pipeline drafts — theta-pi local-PCA + MDS + L1/L2 + CUSUM
 
-Six scripts. Each owns one stage. Drafts only — rearrange / split / merge
-before commit.
+## Architecture
 
-## Stages and outputs
+The boundary-detection half (TR_C / TR_C_plot / TR_D / TR_D_plot) is a
+**verbatim port** of the z-blocks scripts:
+
+| v5 file                    | Source (z-blocks)                                  |
+|----------------------------|----------------------------------------------------|
+| `STEP_TR_C_detect_L1.R`    | `local_PCA_MDS_z/04_detect_L1/04_detect_L1_localpca_zblocks.R` |
+| `STEP_TR_C_plot_L1.R`      | `local_PCA_MDS_z/05_plot_L1/05_plot_L1_localpca_zblocks.R`     |
+| `STEP_TR_D_detect_L2.R`    | `local_PCA_MDS_z/06_detect_L2/06_detect_L2_localpca_zblocks.R` |
+| `STEP_TR_D_plot_L2.R`      | `local_PCA_MDS_z/07_plot_L2/07_plot_L2_localpca_zblocks.R`     |
+
+The detection logic (diagonal boundary scan, grow validator, Ward-adaptive
+thresholding, quadrant validator) is signal-agnostic — it operates on
+`precomp.rds` + `sim_mat_nn{N}.rds`, so any precomp shaped like the z-blocks
+one will work. TR_B v5 produces exactly that shape.
+
+## Stages
 
 ```
 TR_A (existing, unchanged)
-   └─ theta_native.<CHR>.<SCALE>.tsv.gz          per-chrom long TSV (sample × window θπ)
+   └─ theta_native.<CHR>.<SCALE>.tsv.gz                per-chrom long TSV
 
-TR_B v5_precompute  ← REPLACES v4's all-in-one TR_B
-   ├─ 03_per_chrom/<CHR>/precomp.rds              full precomp (dt + sim_mat + mds + bg_q + per-sample PC1/PC2)
-   ├─ 03_per_chrom/<CHR>/sim_mat_nn{0,20,…,320}.rds   NN-smoothed sim_mats
-   ├─ window_dt.tsv.gz                             genome-wide per-window scalar table
-   └─ precomp_summary.tsv                          per-chrom QC
+TR_B v5_precompute   (REPLACES v4's all-in-one TR_B)
+   ├─ precomp/<CHR>.precomp.rds                        z-blocks-shaped:
+   │     dt: chrom, window_idx, start_bp, end_bp, mid_bp,
+   │         theta_pi_median, theta_z_direct,
+   │         MDS1..MDSk, MDS1_z..MDSk_z, max_abs_z, max_z_axis,
+   │         lambda_1..lambda_NPC, lambda_ratio,
+   │         anchor_window_idx, PC_1_<sample>..PC_NPC_<sample>
+   │     sim_mat / sim_band, mds_mat, bg_continuity_quantiles,
+   │     chrom, n_windows, n_samples, npc, k_mds,
+   │     sample_order, unflipped_windows
+   ├─ precomp/sim_mats/<CHR>.sim_mat_nn{0,20,40,80,120,160,200,240,320}.rds
+   ├─ window_dt.tsv.gz                                 genome-wide rollup
+   └─ precomp_summary.tsv
 
-TR_C detect_L1   (cohort-level wide envelopes from |Z| of θπ deviation)
-   └─ 03_per_chrom/<CHR>/L1_envelopes.tsv
+TR_C detect_L1            (verbatim 04_detect_L1; uses sim_mat_nn80 by default)
+   ├─ L1_detect/<CHR>.L1_envelopes.tsv
+   ├─ L1_detect/<CHR>.L1_boundaries.tsv
+   └─ L1_detect/<CHR>.L1_score_curve.tsv
 
-TR_D detect_L2   (cohort-level tight envelopes inside each L1)
-   ├─ 03_per_chrom/<CHR>/L2_envelopes.tsv
-   └─ 02_mds/candidate_regions.tsv.gz              genome-wide rollup
+TR_C_plot                 (verbatim 05_plot_L1)
+   └─ L1_plots/<CHR>.L1_overlay.pdf
 
-TR_E classify_carriers   (k-means on per-sample PC1 inside each L2 → bands)
-   └─ 03_per_chrom/<CHR>/carrier_assignments.tsv
+TR_D detect_L2            (verbatim 06_detect_L2; sim_mat_nn40 inside each L1)
+   ├─ L2_detect/<CHR>.L2_envelopes.tsv
+   ├─ L2_detect/<CHR>.L2_boundaries.tsv
+   ├─ L2_detect/<CHR>.L2_segment_stats.tsv
+   ├─ L2_detect/<CHR>.L2_quadrant_validator.tsv
+   └─ L2_detect/<CHR>.L2_quadrant_audit.tsv
 
-TR_F cusum_per_carrier   (CUSUM per band per candidate; lib_persample_cusum.R kernel)
-   ├─ 03_per_chrom/<CHR>/cusum_per_sample.tsv.gz   one row per (sample × candidate × band)
-   └─ 03_per_chrom/<CHR>/cusum_boundary_dist.tsv   per-side spread classes (tight/intermediate/ragged)
+TR_D_plot                 (verbatim 07_plot_L2)
+   └─ L2_plots/<CHR>.L2_overlay.pdf
 
-TR_G atlas_json   (combine everything → page-12 JSON)
+TR_E classify_carriers    (k-means on per-sample mean PC1 inside each L2)
+   └─ carriers/<CHR>.carrier_assignments.tsv
+
+TR_F cusum_per_carrier    (per-sample + band-mean CUSUM; lib_persample_cusum.R)
+   ├─ cusum/<CHR>.cusum_per_sample.tsv.gz              one row per (sample × candidate × band)
+   └─ cusum/<CHR>.cusum_boundary_dist.tsv              per-side, per-band: distribution + consensus
+
+TR_G atlas_json           (combine everything → page-12 JSON)
    └─ 04_atlas_json/<CHR>/<CHR>_phase2_theta.json
 ```
 
-## Why both L1/L2 AND CUSUM (not "or")
+## Why both L1/L2 (cohort) AND CUSUM (per-carrier)
 
-L1/L2 and CUSUM detect different objects.
+Different objects.
 
-**L1 + L2 are cohort-level.** They scan max_abs_z of θπ deviation across all
-226 samples and identify regions where the cohort signal is elevated. L1 is
-the wide net (long runs, lenient z); L2 is the refined call inside each L1.
-The output is a list of candidate regions — *where* to look. Direct port of
-local_PCA_MDS_z/04_detect_L1 and 06_detect_L2 — same seed-and-grow logic,
-same morphology gates (flat_inv_score, spiky_inv_score, fragmentation_score,
-sim_mat block compactness), same beta-adaptive thresholding. Only difference
-is the inv_likeness composite formula: dosage z-blocks uses
-`45% het_contrast + 30% trimodality + 25% band_discreteness` (PC1 trimodality
-indicators that don't apply to θπ); v5 substitutes
-`50% normalized max_abs_z + 30% sim_mat block compactness + 20% λ-ratio`.
-Everything else (the morphology features, beta p-values, NN-smoothed
-sim_mats, seed-and-grow detector) is verbatim from z-blocks.
+**L1 + L2 (z-blocks ports)** are cohort-level. They scan the sim_mat for
+boundary peaks (where adjacent regions are unusually separated) using
+the diagonal cross-block scan, validate via grow + quadrant tests, and
+partition the chromosome into segments. The output is the candidate
+list — *where* to look. Identical algorithm to z-blocks; only the input
+sim_mat differs (here built from `|cor(pc1[, i], pc1[, j])|`).
 
 **CUSUM is per-carrier — TWO flavors.** Inside each L2 candidate, samples
-are partitioned by their PC1 loading into bands (LOW_DIV / MID_DIV / HIGH_DIV
-via k-means; TR_E). Then TR_F runs:
+are partitioned by their PC1 loading into bands (`LOW_DIV` / `MID_DIV` /
+`HIGH_DIV` via k-means; TR_E). Then TR_F runs:
 
-  1. *Per-sample CUSUM*: one breakpoint per (sample × candidate × band) →
-     the carrier-spread distribution (tight / intermediate / ragged).
-     Manuscript value: "carrier 1 breaks at 18.94 Mb, carrier 17 outlier at
-     17.20 Mb → 3' boundary is bimodal".
-  2. *Band-mean CUSUM*: pool the band's samples into one mean θπ trace
-     (averaging reduces noise by sqrt(n_band)), CUSUM that single trace →
-     ONE consensus breakpoint per (band × candidate × side). Sharp.
-     Manuscript value: "the HIGH_DIV band's 3' boundary is at 18.95 Mb".
+  1. *Per-sample CUSUM*: one breakpoint per (sample × candidate × band).
+     Output is the carrier-spread distribution (`tight` / `intermediate` /
+     `ragged` per IQR threshold).
+  2. *Band-mean CUSUM*: pool the band's samples into one mean θπ trace,
+     CUSUM that single trace → ONE consensus breakpoint per (band × side).
+     Sharper because pooling reduces noise by sqrt(n_band).
 
-Both flavors are emitted side-by-side in `cusum_boundary_dist.tsv` and in the
-atlas JSON's `theta_pi_cusum.candidates[].bands[].boundary_{5,3}_prime` block:
-per-sample stats (`n_carriers`, `median_bp`, `iqr_kb`, `spread_class`) +
-consensus stats (`consensus_cp_bp`, `consensus_strength`).
+Both stay in `cusum_boundary_dist.tsv` and the atlas JSON's
+`theta_pi_cusum.candidates[].bands[].boundary_{5,3}_prime` block.
 
 ## Index convention
 
-All emitted window indices in JSON are 0-indexed (atlas is JS).
+- z-blocks 04/06 emit `win_start` / `win_end` / `boundary_w` as 1-indexed
+  (R-native). TR_G converts to 0-indexed at JSON-emit time so the atlas
+  (JS) reads positionally without off-by-one.
+- TR_B v5 stores `anchor_window_idx` as 0-indexed in the precomp `$dt`.
+- Everything inside R stays 1-indexed.
 
-R-internal stays 1-indexed. The conversion happens at JSON-emit time:
-- TR_C / TR_D write both `win_start` (1-indexed, R-native) and
-  `win_start_idx0` / `win_end_idx0` (0-indexed) to the L1/L2 TSVs.
-  Downstream scripts pick whichever they need.
-- TR_G reads `win_*_idx0` for the JSON.
-- The v4 TR_B has the off-by-one issue noted in the audit (envelope coords
-  emitted as 1-indexed); this v5 set fixes it at the source.
+## NPC (number of PCs to keep)
+
+Default `NPC = 4` in TR_B v5 (was 2 in v4). Storage cost: `NPC × 226
+samples × 16,500 windows × 8 bytes ≈ 30 MB per PC raw`, ~10 MB on disk
+each after gzip. Bump via `--npc 5`. The atlas JSON layer's
+`pc_loadings_aligned` is a list of length NPC.
+
+`K_MDS = 5` (matches z-blocks `SEED_MDS_AXES`). MDS1..MDS5 + MDS1_z..MDS5_z
+emitted on `$dt`; `max_abs_z` is `max(|MDSk_z|)` over the K_MDS axes
+(the z-blocks definition that 04 expects).
+
+A separate `theta_z_direct` column carries the v4-style θπ-direct |Z|
+(per-sample dev from window cohort median). It's kept as an alt track
+for the atlas; not used by 04/06.
 
 ## Run order
 
 ```bash
 source 00_theta_config.sh
-# 1. theta matrices (already done if you ran v4):
+
+# Theta matrices (already done if you ran v4):
 $RSCRIPT STEP_TR_A_compute_theta_matrices.R --chrom C_gar_LG28
-# 2. precompute (per-chrom or all):
+
+# Precompute (per-chrom or all):
 $RSCRIPT v5_drafts/STEP_TR_B_v5_precompute.R --chrom C_gar_LG28
-# 3-6. detect → classify → cusum → emit:
-$RSCRIPT v5_drafts/STEP_TR_C_detect_L1.R         --chrom C_gar_LG28
-$RSCRIPT v5_drafts/STEP_TR_D_detect_L2.R         --chrom C_gar_LG28
-$RSCRIPT v5_drafts/STEP_TR_E_classify_carriers.R --chrom C_gar_LG28
-$RSCRIPT v5_drafts/STEP_TR_F_cusum_per_carrier.R --chrom C_gar_LG28 --lib v5_drafts/lib_persample_cusum.R
-$RSCRIPT v5_drafts/STEP_TR_G_atlas_json.R        --chrom C_gar_LG28
+
+# Boundary detection (z-blocks verbatim ports — outdir is up to you):
+$RSCRIPT v5_drafts/STEP_TR_C_detect_L1.R \
+    --precomp_dir $OUTROOT/precomp --chr C_gar_LG28 \
+    --outdir      $OUTROOT/L1_detect
+
+$RSCRIPT v5_drafts/STEP_TR_D_detect_L2.R \
+    --precomp_dir $OUTROOT/precomp --chr C_gar_LG28 \
+    --L1_dir      $OUTROOT/L1_detect \
+    --outdir      $OUTROOT/L2_detect
+
+# Plots (optional):
+$RSCRIPT v5_drafts/STEP_TR_C_plot_L1.R \
+    --precomp_dir $OUTROOT/precomp --L1_dir $OUTROOT/L1_detect \
+    --chr C_gar_LG28 --outdir $OUTROOT/L1_plots
+
+$RSCRIPT v5_drafts/STEP_TR_D_plot_L2.R \
+    --precomp_dir $OUTROOT/precomp \
+    --L1_dir $OUTROOT/L1_detect --L2_dir $OUTROOT/L2_detect \
+    --chr C_gar_LG28 --outdir $OUTROOT/L2_plots
+
+# Carriers + CUSUM + atlas JSON:
+$RSCRIPT v5_drafts/STEP_TR_E_classify_carriers.R --chr C_gar_LG28
+$RSCRIPT v5_drafts/STEP_TR_F_cusum_per_carrier.R --chr C_gar_LG28 \
+    --lib v5_drafts/lib_persample_cusum.R
+$RSCRIPT v5_drafts/STEP_TR_G_atlas_json.R --chr C_gar_LG28
 ```
 
-For the full 28-chrom run, drop `--chrom`; each script iterates `CHROM_LIST`
-from the config (or scans `03_per_chrom/` for chroms that have a precomp).
+For the full 28-chrom run, omit `--chrom` / `--chr` from each script and
+the iterators pick up `CHROM_LIST` from the config (or scan
+`<OUTROOT>/precomp/` for chroms that have a precomp).
 
-## Knobs to tune
+## What changed since the previous draft
 
-| Script | Knob | Default | Effect |
-|---|---|---|---|
-| TR_B | `--pad` | 1 | local-PCA neighbourhood half-width |
-| TR_B | `--sim-band-half` | 200 | banded sim_mat half-width when n_win > threshold |
-| TR_B | `--sim-n-full-threshold` | 6000 | n_win threshold to switch full ↔ banded |
-| TR_C | `--z-l1` | 1.5 | lenient cohort-|Z| for L1 |
-| TR_C | `--min-l1-windows` | 10 | min run length |
-| TR_C | `--merge-gap` | 5 | merge L1 fragments |
-| TR_D | `--z-l2` | 2.5 | strict cohort-|Z| for L2 inside each L1 |
-| TR_D | `--min-l2-windows` | 5 | min run length |
-| TR_E | `--max-k` | 3 | max k for k-means on PC1 |
-| TR_F | `--bands` | (all) | comma-list of bands to run CUSUM on |
-
-## Memory notes
-
-- TR_B reconstructs the full sim matrix transiently for cmdscale + NN
-  smoothing baseline. At LG28 (n_win=16,500) that's ~1 GB; if you OOM,
-  the next iteration should add a coarse-grid MDS option (bin windows
-  to 100-wide bins, MDS on bin-level sim, interpolate per-window).
-- Per-chrom `precomp.rds` includes per-sample PC1/PC2 columns — at
-  226 samples × 16,500 windows × 8 bytes × 2 PCs ≈ 60 MB raw. Each
-  RDS gets gzipped on save (saveRDS default), typically <20 MB on disk.
+- **Dropped the morphology / `inv_likeness` / `beta_adaptive` machinery
+  from TR_B.** Z-blocks 04/06 don't read those fields; they were dead
+  weight. The precomp is now lean — only what the verbatim 04/06
+  actually consume, plus the per-sample PC loadings the atlas needs.
+- **TR_C / TR_D are now the actual z-blocks 04/06 scripts**, copied
+  verbatim. They do diagonal boundary scan + grow validator (04) and
+  segment-internal scan + Ward-adaptive thresholding + quadrant
+  validator (06). Same algorithms as dosage; different input sim_mat.
+- **Plots added**: TR_C_plot and TR_D_plot are 05 and 07 verbatim. Each
+  emits a multi-page PDF (whole-chrom + per-segment zooms) with L1/L2
+  envelope overlays.
+- **TR_B `max_abs_z` is now the z-blocks definition** (max over K_MDS
+  axis robust z-scores), so 04/06 find it where they expect. The
+  v4-style θπ-direct |Z| is preserved as `theta_z_direct`.
+- **NPC generalized** (default 4). Per-sample loadings `PC_1_<s>` ..
+  `PC_NPC_<s>` are stored on `$dt`.
+- **Output layout matches z-blocks**: `precomp/<chr>.precomp.rds` +
+  `precomp/sim_mats/<chr>.sim_mat_nn{N}.rds`. 04/06's auto-resolution
+  (`--precomp_dir <dir>`) finds them automatically.
 
 ## What's NOT in v5
 
-- No `inv_likeness` composite (z-blocks-specific; rebuild from θπ
-  signals if you want a cohort-level "inv-like" score).
 - No GHSL / SV cross-stamping (Phase 4 catalog work).
 - No interactive re-CUSUM on user-defined sample subsets (CUSUM_SPEC §8.2
-  defers this to a future on-demand recomputation; cluster-side default
-  is the source of truth for v1).
+  defers this to a future on-demand recomputation).
+- The CUSUM kernel `lib_persample_cusum.R` is the same one in
+  `spec_cusum/`; nothing new there.
