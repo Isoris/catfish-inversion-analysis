@@ -85,7 +85,9 @@ for (chrom in chroms) {
     tsv <- file.path(THETA_TSV_DIR,
                      sprintf("theta_native.%s.%s.tsv.gz", chrom, PESTPG_SCALE))
     if (file.exists(tsv)) {
-      long_dt <- fread(tsv); long_dt <- long_dt[chrom == ..chrom]
+      long_dt <- fread(tsv)
+      this_chrom <- chrom
+      long_dt <- long_dt[chrom == this_chrom]
       if (nrow(long_dt) > 0) {
         samp_to_row <- setNames(seq_along(sample_order), sample_order)
         win_to_col  <- setNames(seq_along(dt$window_idx), as.character(dt$window_idx))

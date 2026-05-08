@@ -1,0 +1,53 @@
+# Open WSL, cd to the module, source the config
+cd /mnt/c/Users/quent/Desktop/catfish-inversion-analysis/local_PCA_MDS_theta_pi
+source 00_theta_config.sh
+
+# (One-time sanity) — checks PESTPG_DIR, SAMPLE_LIST, REF, RSCRIPT, output dirs
+bash check_local_setup.sh
+
+# Pick a test chrom
+CHR=C_gar_LG28
+
+# A — theta matrix (skip if already produced for this chrom)
+$RSCRIPT STEP_TR_A_compute_theta_matrices.R --chrom $CHR
+
+# B — precompute: writes precomp/<CHR>.precomp.rds + sim_mats/*nn{0,20,…,320}.rds
+$RSCRIPT v5_drafts/STEP_TR_B_v5_precompute.R --chrom $CHR
+
+# C — L1 (z-blocks 04 verbatim, uses sim_mat_nn80 by default)
+$RSCRIPT v5_drafts/STEP_TR_C_detect_L1.R \
+    --precomp_dir "$OUTROOT/precomp" \
+    --chr "$CHR" \
+    --outdir "$OUTROOT/L1_detect"
+
+# D — L2 (z-blocks 06 verbatim, sim_mat_nn40 inside each L1)
+$RSCRIPT v5_drafts/STEP_TR_D_detect_L2.R \
+    --precomp_dir "$OUTROOT/precomp" \
+    --L1_dir "$OUTROOT/L1_detect" \
+    --chr "$CHR" \
+    --outdir "$OUTROOT/L2_detect"
+
+# E — k-means on per-sample mean PC1 inside each L2 → carrier bands
+$RSCRIPT v5_drafts/STEP_TR_E_classify_carriers.R --chr "$CHR"
+
+# F — per-sample + band-mean CUSUM per (candidate × band)
+$RSCRIPT v5_drafts/STEP_TR_F_cusum_per_carrier.R --chr "$CHR" \
+    --lib v5_drafts/lib_persample_cusum.R
+
+# G — combine into page-12 atlas JSON
+$RSCRIPT v5_drafts/STEP_TR_G_atlas_json.R --chr "$CHR"
+
+# Optional plots (requires ggplot2 + ggnewscale + scales + ggrepel)
+$RSCRIPT v5_drafts/STEP_TR_C_plot_L1.R \
+    --precomp_dir "$OUTROOT/precomp" --L1_dir "$OUTROOT/L1_detect" \
+    --chr "$CHR" --outdir "$OUTROOT/L1_plots"
+$RSCRIPT v5_drafts/STEP_TR_D_plot_L2.R \
+    --precomp_dir "$OUTROOT/precomp" \
+    --L1_dir "$OUTROOT/L1_detect" --L2_dir "$OUTROOT/L2_detect" \
+    --chr "$CHR" --outdir "$OUTROOT/L2_plots"
+
+# Inspect what landed
+ls -la $OUTROOT/precomp/
+ls    $OUTROOT/precomp/sim_mats/ | head
+ls -la $OUTROOT/L1_detect/ $OUTROOT/L2_detect/ $OUTROOT/carriers/ $OUTROOT/cusum/
+ls -la $OUTROOT/04_atlas_json/$CHR/

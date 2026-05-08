@@ -100,7 +100,8 @@ load_theta_matrix <- function(chrom) {
   tsv <- file.path(THETA_TSV_DIR, sprintf("theta_native.%s.%s.tsv.gz", chrom, PESTPG_SCALE))
   if (!file.exists(tsv)) return(NULL)
   long_dt <- fread(tsv)
-  long_dt <- long_dt[chrom == ..chrom]
+  this_chrom <- chrom
+  long_dt <- long_dt[chrom == this_chrom]
   if (nrow(long_dt) == 0) return(NULL)
   win_grid <- unique(long_dt[, .(window_idx, start_bp, end_bp)])
   setkey(win_grid, window_idx)
