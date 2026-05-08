@@ -2,58 +2,66 @@
 # =============================================================================
 # STEP_TR_A_compute_theta_matrices.R
 # =============================================================================
-# Phase 2 / 2f_theta_discovery — heavy precomputation step.
+# Heavy precomputation step for the theta-pi local-PCA / MDS path.
 #
-# Reads per-sample ANGSD pestPG files at PESTPG_SCALE (configured in
-# 00_theta_config.sh; default win10000.step2000) for one chromosome, and
-# emits a long-format TSV with one row per (sample, window) carrying the
-# pairwise nucleotide diversity θπ and the per-window callable site count.
+# Reads per-sample ANGSD pestPG files for one chromosome and emits a
+# long-format TSV with one row per (sample, window) carrying the pairwise
+# nucleotide diversity θπ and the per-window callable-site count.
 #
-# This is the heavy half of an A/B pair (mirroring the GHSL v6 module
-# structure: STEP_C04 heavy / STEP_C04b classifier). The companion light
-# script STEP_TR_B_classify_theta.R consumes this TSV, computes per-window
-# population metrics and robust |Z|, runs window-wise local PCA on the
-# samples × windows θπ matrix, calls L2 envelopes from contiguous high-|Z|
-# runs, and writes the page-12 atlas JSON.
+# This is the heavy half of an A/B pair: STEP_TR_B_classify_theta.R is the
+# light classifier that consumes the TSV, computes per-window population
+# metrics + robust |Z|, runs per-window local PCA on the samples × windows
+# θπ matrix, calls L2 envelopes from contiguous high-|Z| runs, and writes
+# the consolidated atlas JSON.
+#
+# pestPG column layout (verified against ANGSD thetaStat output)
+# --------------------------------------------------------------
+#   col  1: (idxStart,idxEnd)(posStart,posEnd)(winStart,winEnd)
+#   col  2: Chr
+#   col  3: WinCenter
+#   col  4: tW
+#   col  5: tP            ← per-window SUM of per-site θπ (NOT a density)
+#   col  6..13: tF, tH, tL, Tajima, fuf, fud, fayh, zeng
+#   col 14: nSites        ← per-window callable-site count
+#
+# This script computes per-site θπ as tP / nSites (when nSites > 0). See
+# README_theta_pi_scaling.md and ANGSD GH issue #329 for the rationale —
+# in our 226-sample 9× cohort, nSites varies sample-to-sample so dividing
+# is required before any cross-sample / cross-window comparison.
 #
 # Window-grid policy
 # ------------------
-# THETA_GRID_MODE controls how the per-window θπ values are assigned to
-# window indices in the output:
-#   "native"  (default): the θπ scrubber uses the pestPG grid as-is.
-#                        On LG28 at win10000.step2000 this yields
-#                        ~16,500 windows per chromosome. The atlas
-#                        translates between state.cur (dosage window
-#                        index) and state.cur_thpi (θπ window index)
-#                        via Int32Array lookup tables built at JSON
-#                        load time (cursor_sync_decision_v1.md).
-#   "dosage":            per-sample pestPG values are nearest-midpoint
-#                        joined onto the dosage scrubber's variable-bp
-#                        window grid. This is the fallback if the
-#                        native-grid per-sample loadings prove too
-#                        noisy on real data. One config line to switch.
+# THETA_GRID_MODE controls how θπ values are assigned to window indices:
+#   "native"  (default): use the pestPG grid as-is. At win10000.step2000
+#                        this yields ~16,500 windows per chromosome. The
+#                        atlas reconciles this with the dosage grid via
+#                        Int32Array lookup tables built at JSON load.
+#   "dosage":            pestPG values are nearest-midpoint joined onto
+#                        the dosage scrubber's variable-bp window grid.
+#                        Fallback if the native-grid per-sample loadings
+#                        prove too noisy on real data — one config line
+#                        to switch.
 #
-# Inputs (produced upstream by MODULE_3 / 02_run_heterozygosity.sh)
-# -----------------------------------------------------------------
-#   ${PESTPG_DIR}/${SAMPLE}.${PESTPG_SCALE}.pestPG  (226 samples × 28 chroms)
-#   ${SAMPLE_LIST}                                  (one CGA id per line)
+# Inputs (configured in 00_theta_config.sh)
+# -----------------------------------------
+#   $PESTPG_DIR/$SAMPLE.$PESTPG_SCALE.pestPG   per-sample pestPG files
+#   $SAMPLE_LIST                                one sample id per line
 #
 # In dosage mode also requires:
-#   ${DOSAGE_WIN_BED_DIR}/${CHROM}/windows.bed      (from 2a_local_pca/STEP09b)
+#   $DOSAGE_WIN_BED_DIR/$CHROM/windows.bed     from the dosage scrubber
 #
 # Output
 # ------
-# Native mode:  ${THETA_TSV_DIR}/theta_native.<CHROM>.<SCALE>.tsv.gz
-# Dosage mode:  ${THETA_TSV_DIR}/theta_dgrid.<CHROM>.tsv.gz
-# Columns:      sample  chrom  window_idx  start_bp  end_bp  theta_pi  n_sites
-# (window_idx is 0-based and references the chosen output grid)
+#   native mode: $THETA_TSV_DIR/theta_native.<CHROM>.<SCALE>.tsv.gz
+#   dosage mode: $THETA_TSV_DIR/theta_dgrid.<CHROM>.tsv.gz
+#   columns:     sample  chrom  window_idx  start_bp  end_bp
+#                theta_pi (= tP/nSites, per-site)  tP_sum (raw tP)  n_sites
+#   window_idx is 0-based and references the chosen output grid.
 #
 # Usage
 # -----
 #   source 00_theta_config.sh
 #   Rscript STEP_TR_A_compute_theta_matrices.R --chrom <CHROM>
-#
-# Wall time: ~3–5 minutes per chromosome for 226 samples on LANTA scratch.
 # =============================================================================
 
 suppressPackageStartupMessages({
@@ -62,7 +70,7 @@ suppressPackageStartupMessages({
 
 args <- commandArgs(trailingOnly = TRUE)
 
-# B01-style named-arg parser — mirrors STEP_B01_mds_multimode_stage1.R
+# Named-arg parser
 CHROM <- NULL
 i <- 1L
 while (i <= length(args)) {
@@ -99,7 +107,7 @@ out_tsv <- file.path(THETA_TSV_DIR, out_basename)
 
 samples <- readLines(SAMPLE_LIST)
 samples <- samples[nchar(samples) > 0]
-message("[STEP_TR00b] CHROM=", CHROM,
+message("[STEP_TR_A] CHROM=", CHROM,
         "  n_samples=", length(samples),
         "  scale=", PESTPG_SCALE,
         "  mode=", THETA_GRID_MODE)
@@ -125,18 +133,15 @@ load_pestpg <- function(sample) {
   pp <- pp[Chr == CHROM]
   if (nrow(pp) == 0) return(NULL)
 
-  # ── θπ scaling (ANGSD GitHub issue #329) ──────────────────────────────
-  # The pestPG `tP` column is the SUM of per-site θπ across sites with
-  # data in the window, NOT a per-site density. Divide by `nSites` (the
-  # per-window callable-site count, last column of pestPG) to get a
-  # per-site value comparable across windows and samples.
-  #   See: https://github.com/ANGSD/angsd/issues/329
-  #        Korunes & Samuk 2021 (pixy) — missing-data-aware denominator
-  # In our 226-sample 9× setup, nSites varies sample-to-sample due to
-  # coverage dropouts; without this division, samples with more callable
-  # sites in a window would falsely show higher diversity.
-  # We preserve `tP_sum` and `n_sites` so STEP_TR_B / atlas can apply
-  # their own min-nSites masks without re-reading pestPG.
+  # ── θπ per-site normalization (ANGSD GH #329) ─────────────────────────
+  # `tP` (col 5) is the per-window SUM of per-site θπ; `nSites` (col 14)
+  # is the per-window callable-site count. Divide to get a per-site value
+  # comparable across windows and samples. Coverage varies sample-to-
+  # sample so without this normalization, deeper samples falsely look
+  # more diverse in any window where they have more callable sites.
+  # Edge windows (chromosome ends) have nSites = 0 → NA.
+  # `tP_sum` and `n_sites` are preserved alongside so STEP_TR_B / the
+  # atlas can apply their own min-nSites masks without re-reading pestPG.
   pp[, theta_pi_per_site := fifelse(
         as.integer(nSites) > 0L,
         as.numeric(tP) / as.numeric(nSites),
@@ -176,20 +181,20 @@ if (THETA_GRID_MODE == "native") {
     if (!is.null(pp_ref)) { ref_sample <- pp_ref; break }
   }
   if (is.null(ref_sample)) {
-    stop("[STEP_TR00b] Could not load any sample's pestPG for ", CHROM)
+    stop("[STEP_TR_A] Could not load any sample's pestPG for ", CHROM)
   }
   setorder(ref_sample, mid_bp)
   windows_grid <- ref_sample[, .(start_bp, end_bp, mid_bp)]
   windows_grid[, window_idx := .I - 1L]
   setkey(windows_grid, mid_bp)
-  message("[STEP_TR00b] θπ-native grid: ", nrow(windows_grid), " windows")
+  message("[STEP_TR_A] θπ-native grid: ", nrow(windows_grid), " windows")
 
   # Second pass: assign each sample's pestPG values to window_idx by mid_bp
   for (i in seq_along(samples)) {
     s <- samples[i]
     pp <- load_pestpg(s)
     if (is.null(pp)) {
-      warning("[STEP_TR00b] Missing/malformed pestPG for ", s, " — skip")
+      warning("[STEP_TR_A] Missing/malformed pestPG for ", s, " — skip")
       n_skip <- n_skip + 1L; next
     }
     setkey(pp, mid_bp)
@@ -207,7 +212,7 @@ if (THETA_GRID_MODE == "native") {
                                 theta_pi, tP_sum, n_sites)]
     n_ok <- n_ok + 1L
     if (i %% 50 == 0) {
-      message("[STEP_TR00b] processed ", i, " / ", length(samples))
+      message("[STEP_TR_A] processed ", i, " / ", length(samples))
     }
   }
 
@@ -217,11 +222,11 @@ if (THETA_GRID_MODE == "native") {
   # scrubber windows (the v3 design). Useful if v4's finer-scale loadings
   # turn out too noisy on real data.
   if (is.na(DOSAGE_WIN_BED_DIR)) {
-    stop("[STEP_TR00b] dosage mode requires DOSAGE_WIN_BED_DIR set")
+    stop("[STEP_TR_A] dosage mode requires DOSAGE_WIN_BED_DIR set")
   }
   dosage_bed <- file.path(DOSAGE_WIN_BED_DIR, CHROM, "windows.bed")
   if (!file.exists(dosage_bed)) {
-    stop("[STEP_TR00b] dosage mode: missing ", dosage_bed)
+    stop("[STEP_TR_A] dosage mode: missing ", dosage_bed)
   }
   dosage <- fread(dosage_bed,
                   col.names = c("chrom", "start_bp", "end_bp",
@@ -229,13 +234,13 @@ if (THETA_GRID_MODE == "native") {
   dosage <- dosage[chrom == CHROM]
   dosage[, mid_bp := as.integer((start_bp + end_bp) / 2L)]
   setkey(dosage, mid_bp)
-  message("[STEP_TR00b] dosage grid: ", nrow(dosage), " windows")
+  message("[STEP_TR_A] dosage grid: ", nrow(dosage), " windows")
 
   for (i in seq_along(samples)) {
     s <- samples[i]
     pp <- load_pestpg(s)
     if (is.null(pp)) {
-      warning("[STEP_TR00b] Missing/malformed pestPG for ", s, " — skip")
+      warning("[STEP_TR_A] Missing/malformed pestPG for ", s, " — skip")
       n_skip <- n_skip + 1L; next
     }
     pp_for_join <- pp[, .(mid_bp, theta_pi, tP_sum, n_sites)]
@@ -248,24 +253,24 @@ if (THETA_GRID_MODE == "native") {
                                 theta_pi, tP_sum, n_sites)]
     n_ok <- n_ok + 1L
     if (i %% 50 == 0) {
-      message("[STEP_TR00b] processed ", i, " / ", length(samples))
+      message("[STEP_TR_A] processed ", i, " / ", length(samples))
     }
   }
 }
 
 if (n_ok == 0) {
-  stop("[STEP_TR00b] No samples produced output. Check PESTPG_DIR + sample naming.")
+  stop("[STEP_TR_A] No samples produced output. Check PESTPG_DIR + sample naming.")
 }
 
 result <- rbindlist(out_rows, use.names = TRUE)
-message("[STEP_TR00b] joined: n_ok=", n_ok,
+message("[STEP_TR_A] joined: n_ok=", n_ok,
         " n_skip=", n_skip,
         " total_rows=", nrow(result))
 
 # ── Write output TSV ──────────────────────────────────────────────────────
 fwrite(result, out_tsv, sep = "\t", compress = "gzip", na = "")
 fi <- file.info(out_tsv)
-message("[STEP_TR00b] Wrote ", out_tsv,
+message("[STEP_TR_A] Wrote ", out_tsv,
         " (", round(fi$size / 1024 / 1024, 2), " MB)")
 
-message("[STEP_TR00b] DONE — chrom=", CHROM, " mode=", THETA_GRID_MODE)
+message("[STEP_TR_A] DONE — chrom=", CHROM, " mode=", THETA_GRID_MODE)

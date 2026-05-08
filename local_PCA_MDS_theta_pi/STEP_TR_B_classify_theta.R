@@ -2,36 +2,48 @@
 # =============================================================================
 # STEP_TR_B_classify_theta.R
 # =============================================================================
-# Phase 2 / 2f_theta_discovery — light classifier and JSON emitter.
+# Light classifier + atlas-JSON emitter for the theta-pi local-PCA / MDS path.
 #
 # Consumes the long-format TSV produced by STEP_TR_A_compute_theta_matrices.R
 # and produces:
-#   1. A samples × windows θπ matrix in memory.
+#   1. A samples × windows θπ matrix in memory (per-site θπ from TR_A's
+#      tP/nSites column — NOT raw pestPG tP).
 #   2. Per-window population metrics: median, MAD, IQR, |Z| from per-sample
 #      deviations against the chromosome baseline.
 #   3. Per-window local PCA over a (2·pad + 1) window neighbourhood: PC1 / PC2
 #      loadings per sample, λ₁/λ₂ ratio, and a one-dimensionality flag.
 #   4. L2 envelopes from contiguous runs of |Z| > threshold (configurable,
-#      default 2.5) with minimum length and merge gap parameters.
-#   5. Optional per-interval karyotype-class assignment via k-means on
+#      default 2.5) with minimum length and merge gap parameters; L1 from
+#      merging adjacent L2s within a wider gap.
+#   5. Optional per-interval karyotype assignment via k-means on
 #      interval-mean θπ when --intervals is supplied (k = 2..max_k with
-#      silhouette selection, mirroring the GHSL v6b Part C output).
-#   6. Page-12 atlas JSON layer set:
+#      silhouette selection).
+#   6. Atlas JSON layer set:
 #        - theta_pi_per_window      (samples × windows θπ + n_sites)
 #        - theta_pi_local_pca       (PC1/PC2 loadings, λ ratios, |Z| profile)
 #        - theta_pi_envelopes       (L2 + L1 envelope coordinates)
 #        - tracks                   (theta_pi_median, theta_pi_z, lambda_ratio)
 #
+# Per-site invariant
+# ------------------
+# `theta_pi` in the input TSV is per-site (tP/nSites; see TR_A header).
+# Every analysis below — window medians, |Z|, local PCA, envelopes — is
+# computed from this per-site matrix. The raw pestPG window-sum `tP_sum`
+# is exposed alongside in the JSON purely for diagnostic display, never
+# for analysis. Atlas pages render the per-site track by default and may
+# offer a raw-sum toggle (helpful for spotting low-callable-site regions
+# that the per-site track flattens by construction).
+#
 # Architectural notes
 # -------------------
-# This pipeline mirrors the dosage scrubber's L1/L2 envelope detection but
-# operates on a 1D |Z| profile rather than an n × n similarity matrix. The
-# dosage scrubber computes a window×window sim_mat to recover sign-invariant
+# Mirrors the dosage scrubber's L1/L2 envelope detection but operates on
+# a 1D |Z| profile rather than an n × n similarity matrix. The dosage
+# scrubber computes a window×window sim_mat to recover sign-invariant
 # similarity from sign-ambiguous PC eigenvectors; the θπ engine doesn't
-# need this step because per-sample θπ values are themselves sign-stable
-# (higher diversity = larger value, no eigenvector flip ambiguity).
-# Envelopes are therefore detected from contiguous high-|Z| runs in 1D —
-# the same algorithmic spirit, no n² intermediate, no browser memory cap.
+# need that step because per-sample θπ values are themselves sign-stable
+# (higher diversity = larger value, no eigenvector-flip ambiguity).
+# Envelopes are detected from contiguous high-|Z| runs in 1D — same
+# algorithmic spirit, no n² intermediate, no browser memory cap.
 #
 # Usage
 # -----
@@ -43,9 +55,6 @@
 #                                                      [--merge-gap 3]
 #                                                      [--pad 1]
 #                                                      [--max-k 5]
-#
-# Walltime: ~30 seconds per chromosome at win10000.step2000 (16,500
-#           windows). Iterate freely on threshold tuning.
 # =============================================================================
 
 suppressPackageStartupMessages({
@@ -61,7 +70,7 @@ suppressPackageStartupMessages({
 
 args <- commandArgs(trailingOnly = TRUE)
 
-# B01-style: all args named. CHROM is required; rest have defaults.
+# All args named. CHROM is required; the rest have defaults.
 CHROM         <- NULL
 OUT_JSON      <- NULL
 INTERVAL_FILE <- NULL
@@ -550,15 +559,11 @@ for (s in seq_len(n_samp)) {
   samples_block[[s]] <- entry
 }
 
-# v4 turn 114: also build a flat row-major `values` vector (length n_w * n_s,
-# row = window, col = sample). This matches the atlas's canonical Shape A
-# contract for theta_pi_per_window.values (line ~32521 of Inversion_atlas.html
-# detectSchemaAndLayers). It's redundant with samples[i].theta_pi (every value
-# appears in both forms) but lets the atlas's vectorized readers grab the full
-# matrix in one shot rather than walking the samples array. Cost: ~25% file
-# size increase for theta_pi_per_window block — acceptable.
-# (The atlas's case-block accepts EITHER form per the turn-114 dual-shape
-# patch, so emitting both is purely a cleanness measure for new runs.)
+# Also emit a flat row-major `values` vector (length n_w * n_s, row =
+# window, col = sample). Redundant with samples[i].theta_pi (every value
+# appears in both forms) but lets atlas readers grab the full matrix in
+# one shot rather than walking the samples array. Cost: ~25% file size
+# increase on the theta_pi_per_window block — acceptable.
 values_flat <- numeric(n_win * n_samp)
 for (wi in seq_len(n_win)) {
   values_flat[((wi - 1L) * n_samp + 1L):(wi * n_samp)] <-
@@ -579,10 +584,10 @@ theta_pi_per_window <- list(
   default_mode    = "per_site",
   n_samples      = as.integer(n_samp),
   n_windows      = as.integer(n_win),
-  # v4 turn 114: sample_ids = top-level string array of sample IDs in the
-  # canonical row order used by `values`. Distinct from `samples` (which
-  # is the array of per-sample-object entries, sample-major). Both are
-  # emitted so atlas readers can pick whichever form they need.
+  # sample_ids = top-level string array of sample IDs in the canonical row
+  # order used by `values`. Distinct from `samples` (the per-sample-object
+  # array, sample-major). Both forms emitted so atlas readers can pick
+  # whichever they need.
   sample_ids     = sample_order,
   values         = clean_numeric(values_flat, 6),
   windows        = lapply(seq_len(n_win), function(wi) list(
@@ -595,12 +600,10 @@ theta_pi_per_window <- list(
 )
 
 # Layer: theta_pi_local_pca
-# v4 turn 114: emit BOTH `z_profile` (TR_B's original name, kept for
-# backward compat with consumers / atlas-side caches built before turn 114)
-# AND `z` (atlas-canonical contract name). They're identical numeric
-# vectors — the atlas's case-block / recovery sweep accepts either, but
-# emitting both means an atlas tab that reads `z` directly (without going
-# through detectSchemaAndLayers's tolerance code path) just works.
+# Emit BOTH `z` (atlas-canonical contract name) AND `z_profile` (TR_B's
+# legacy name, kept for backward compat with older atlas caches). They're
+# identical numeric vectors; emitting both means consumers reading either
+# field name just work without going through tolerance-fallback paths.
 theta_pi_local_pca <- list(
   schema_version = 1L,
   layer          = "theta_pi_local_pca",
@@ -674,14 +677,10 @@ tracks_layer <- list(
 )
 
 # Top-level JSON
-# v4 turn 114: schema_version bumped 1 → 2. Now that the per-layer blocks
-# emit atlas-canonical field names (theta_pi_per_window.values + .sample_ids,
-# theta_pi_local_pca.z) alongside the legacy names, the JSON conforms to
-# the v2 contract and the atlas's case-block detection path activates
-# directly without falling through to inferLayersFromV1's recovery sweep.
-# The atlas accepts either schema_version=1 OR =2 with these layer shapes
-# (turn-114 dual-tolerance patch in detectSchemaAndLayers + inferLayersFromV1),
-# so this bump is a cleanness measure, not a functional gate.
+# schema_version = 2: per-layer blocks emit atlas-canonical field names
+# (theta_pi_per_window.values + .sample_ids, theta_pi_local_pca.z)
+# alongside the legacy names. The atlas accepts either v1 or v2 with
+# these layer shapes; the bump is a cleanness measure, not a gate.
 out_json_obj <- list(
   schema_version    = 2L,
   chrom             = CHROM,
