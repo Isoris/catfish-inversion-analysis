@@ -1,9 +1,12 @@
 #!/usr/bin/env Rscript
 # =============================================================================
-# STEP_C04c_ghsl_local_pca.R
+# STEP_GH_C_precompute.R
 # =============================================================================
-# Phase 2 / 2e_ghsl_discovery — Layer C local PCA companion to STEP_C04
-# (heavy divergence engine) and STEP_C04b (light classifier).
+# GHSL stage C — precompute (local PCA + sim_mat + secondary |Z| envelopes).
+# Companion to STEP_GH_A (heavy divergence engine) and STEP_GH_B (classifier).
+#
+# This stage is the analogue of theta_pi's TR_B and dosage's STEP_ZO_03 — it
+# builds the precomp/sim_mat that the L1/L2 boundary detector consumes.
 #
 # Purpose
 # -------
@@ -16,10 +19,11 @@
 #   * sim_mat (window × window similarity from |cor(pc1_i, pc1_j)|)
 #   * mds_coords (cmdscale of 1 - sim_mat to MDS1, MDS2)
 #   * sign-aligned loadings (anchor-window flipping for cursor-coherent display)
-#   * L2 / L1 envelopes from contiguous high-|Z| runs
+#   * L2 / L1 envelopes from contiguous high-|Z| runs (secondary candidate set)
 #
-# This is the cluster-side precomp; turn-3 JSON exporter consumes the RDS
-# this script writes.
+# Downstream: STEP_GH_D consumes the sim_mat for D17 boundary detection;
+# STEP_GH_E packs everything (primary PASS-runs + secondary |Z| envelopes +
+# D17 envelopes) into the page-3 atlas JSON.
 #
 # Architecture decisions (locked in phase2_ghsl_arrangement_v1.md and
 # schema_v2_addendum_ghsl_page3.md)
@@ -54,27 +58,27 @@
 #
 #  6. Secondary envelopes (L2 / L1 from contiguous high-|Z| runs in z_profile)
 #     ARE emitted, but as a SECONDARY layer. The primary GHSL candidate set
-#     is STEP_C04b's PASS-status runs (calibrated, denominator-confound-
+#     is STEP_GH_B's PASS-status runs (calibrated, denominator-confound-
 #     mitigated). Both ship to the page-3 atlas; the user sees both, can
 #     compare where they agree vs disagree.
 #
-#     Asymmetry vs θπ: STEP_TR_B_classify_theta.R DOES emit primary L2/L1
-#     envelopes from |Z| profile because no upstream production θπ
-#     candidate detector exists (no θπ-equivalent of STEP_C04b is yet
-#     calibrated). For θπ, the |Z|-derived envelopes ARE the candidate
-#     set. For GHSL, they're a cross-check on top of the production set.
-#     This isn't a contradiction — it reflects which streams have
-#     calibrated upstream detectors, and which don't (yet).
+#     Asymmetry vs θπ: theta_pi's classifier emits primary L2/L1 envelopes
+#     from |Z| profile because no upstream production θπ candidate detector
+#     exists (no θπ-equivalent of STEP_GH_B is yet calibrated). For θπ, the
+#     |Z|-derived envelopes ARE the candidate set. For GHSL, they're a
+#     cross-check on top of the production set. This isn't a contradiction —
+#     it reflects which streams have calibrated upstream detectors, and
+#     which don't (yet).
 #
 # Inputs
 # ------
-#   <ghsl_v6_dir>/<CHROM>.ghsl_v6_matrices.rds  (from STEP_C04 v6 heavy)
+#   <ghsl_matrices_dir>/<CHROM>.ghsl_matrices.rds  (from STEP_GH_A heavy)
 #     Carries: div_mat, het_mat, n_sites_mat, n_phased_het_mat, rolling[],
 #              rolling_het[], window_info, sample_names, chrom, params
 #
 # Output
 # ------
-#   <out_dir>/<CHROM>.ghsl_v6_localpca.rds
+#   <out_dir>/<CHROM>.ghsl_localpca.rds
 #     Carries: pc1_loadings_mat, pc2_loadings_mat (raw, sign-ambiguous)
 #              pc1_loadings_aligned_mat, pc2_loadings_aligned_mat
 #              lambda_1, lambda_2, lambda_ratio, z_profile, z_top10_mean
@@ -85,8 +89,8 @@
 #              window_info, sample_names, chrom, params
 #
 #   PRIMARY envelopes (the canonical GHSL candidate set) are NOT in this
-#   output — turn-3 exporter reads them from <chr>.ghsl_v6.annot.rds (the
-#   production STEP_C04b PASS-runs), packs them into the page-3 JSON as
+#   output — STEP_GH_E reads them from <chr>.ghsl_annot.rds (the
+#   production STEP_GH_B PASS-runs), packs them into the page-3 JSON as
 #   `ghsl_envelopes`. The SECONDARY ones from this script ship as
 #   `ghsl_secondary_envelopes` — orthogonal cross-check.
 #
@@ -94,8 +98,8 @@
 #
 # Usage
 # -----
-#   Rscript STEP_C04c_ghsl_local_pca.R \
-#     <ghsl_v6_matrices_dir> <localpca_out_dir> \
+#   Rscript STEP_GH_C_precompute.R \
+#     <ghsl_matrices_dir> <localpca_out_dir> \
 #     [--chrom C_gar_LG28] \
 #     [--pad 1] \
 #     [--smoothing-scale none|s10|s20|s50|s100] \
@@ -119,7 +123,7 @@ suppressPackageStartupMessages({
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 2) {
   stop(paste(
-    "Usage: Rscript STEP_C04c_ghsl_local_pca.R <matrices_dir> <out_dir> [opts]",
+    "Usage: Rscript STEP_GH_C_precompute.R <matrices_dir> <out_dir> [opts]",
     "  --chrom <chr>                 process single chromosome (default: all)",
     "  --pad 1                       local-PCA neighbourhood half-width (windows each side)",
     "  --smoothing-scale none        input matrix: 'none' for raw div_mat, or s10/s20/s50/s100",
@@ -130,7 +134,7 @@ if (length(args) < 2) {
     "  --merge-gap 3                 merge adjacent secondary L2 envelopes within this gap",
     "",
     "  Note: secondary envelopes are an orthogonal local-PCA cross-check.",
-    "  Primary GHSL candidates come from STEP_C04b's PASS-status runs",
+    "  Primary GHSL candidates come from STEP_GH_B's PASS-status runs",
     "  (calibrated, denominator-confound-mitigated). The two layers ship",
     "  side-by-side in the page-3 atlas JSON; the user sees both.",
     sep = "\n"
@@ -167,18 +171,18 @@ stopifnot(SMOOTHING %in% c("none", "s10", "s20", "s30", "s40", "s50", "s100"))
 dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
 message("================================================================")
-message("[S3v6c] GHSL local PCA — turn-2 cluster-side precomp")
+message("[GH_C] GHSL local PCA — turn-2 cluster-side precomp")
 message("================================================================")
-message("[S3v6c] Matrices dir: ", MATRICES_DIR)
-message("[S3v6c] Output dir:   ", OUT_DIR)
-message("[S3v6c] pad=",            PAD,
+message("[GH_C] Matrices dir: ", MATRICES_DIR)
+message("[GH_C] Output dir:   ", OUT_DIR)
+message("[GH_C] pad=",            PAD,
         " smoothing=",              SMOOTHING,
         " min_samples=",            MIN_SAMPLES,
         " anchor=",                 ANCHOR_ARG)
-message("[S3v6c] secondary envelope params: z>", Z_THRESHOLD,
+message("[GH_C] secondary envelope params: z>", Z_THRESHOLD,
         " min_l2=", MIN_L2_WIN,
         " merge_gap=", MERGE_GAP)
-message("[S3v6c] (primary GHSL candidates: STEP_C04b PASS-runs;",
+message("[GH_C] (primary GHSL candidates: STEP_GH_B PASS-runs;",
         " these are local-PCA secondary cross-check)")
 
 # =============================================================================
@@ -321,8 +325,8 @@ compute_mds <- function(sim_mat) {
 }
 
 # ---- Secondary envelope helpers ---------------------------------------------
-# STEP_C04c's local-PCA-derived envelopes are SECONDARY: the production
-# STEP_C04b classifier (calibrated, denominator-confound-mitigated) is the
+# STEP_GH_C's local-PCA-derived envelopes are SECONDARY: the production
+# STEP_GH_B classifier (calibrated, denominator-confound-mitigated) is the
 # primary GHSL candidate detector. We compute these alongside as an
 # orthogonal cross-check — when the two detectors agree, that's strong
 # convergent evidence; when they disagree, that's diagnostic information
@@ -331,7 +335,7 @@ compute_mds <- function(sim_mat) {
 # |Z| panel, distinguished by color.
 #
 # This mirrors what STEP_TR_B does for θπ — except θπ has no upstream
-# production detector (no equivalent of STEP_C04b exists for nucleotide
+# production detector (no equivalent of STEP_GH_B exists for nucleotide
 # diversity), so its envelopes ARE the candidate set. GHSL is the inverse
 # situation: production detector exists upstream, so local-PCA envelopes
 # are secondary.
@@ -386,24 +390,24 @@ merge_to_l1 <- function(l2_dt, l1_merge_gap) {
 # Main loop — one chromosome at a time
 # =============================================================================
 
-rds_files <- sort(list.files(MATRICES_DIR, pattern = "\\.ghsl_v6_matrices\\.rds$",
+rds_files <- sort(list.files(MATRICES_DIR, pattern = "\\.ghsl_matrices\\.rds$",
                              full.names = TRUE))
 if (length(rds_files) == 0) {
-  stop("[S3v6c] FATAL: No .ghsl_v6_matrices.rds files in: ", MATRICES_DIR)
+  stop("[GH_C] FATAL: No .ghsl_matrices.rds files in: ", MATRICES_DIR)
 }
-message("[S3v6c] Found ", length(rds_files), " matrix files")
+message("[GH_C] Found ", length(rds_files), " matrix files")
 
 if (!is.null(CHROM_FILTER)) {
   rds_files <- rds_files[grepl(paste0("/", CHROM_FILTER, "\\."), rds_files)]
   if (length(rds_files) == 0) {
-    stop("[S3v6c] FATAL: --chrom ", CHROM_FILTER, " not found among matrix files")
+    stop("[GH_C] FATAL: --chrom ", CHROM_FILTER, " not found among matrix files")
   }
 }
 
 for (rds_f in rds_files) {
   t0 <- proc.time()
   message("\n----------------------------------------------------------------")
-  message("[S3v6c] Loading: ", basename(rds_f))
+  message("[GH_C] Loading: ", basename(rds_f))
 
   m <- readRDS(rds_f)
   chr     <- m$chrom
@@ -416,7 +420,7 @@ for (rds_f in rds_files) {
     m$div_mat
   } else {
     if (is.null(m$rolling[[SMOOTHING]])) {
-      stop("[S3v6c] FATAL: rolling scale ", SMOOTHING,
+      stop("[GH_C] FATAL: rolling scale ", SMOOTHING,
            " not in matrices RDS for ", chr,
            "\n  Available: ", paste(names(m$rolling), collapse = ", "))
     }
@@ -434,11 +438,11 @@ for (rds_f in rds_files) {
   weight_mat <- sqrt(pmax(nph, 0) / med_nph)
   weight_mat[!is.finite(weight_mat)] <- 0
 
-  message("[S3v6c] ", chr, ": ", n_samp, " samples × ", n_win, " windows")
-  message("[S3v6c]   smoothing=", SMOOTHING, "  median(n_phased_het)=", med_nph)
+  message("[GH_C] ", chr, ": ", n_samp, " samples × ", n_win, " windows")
+  message("[GH_C]   smoothing=", SMOOTHING, "  median(n_phased_het)=", med_nph)
 
   # ── Per-window local PCA ──
-  message("[S3v6c] Stage 1: per-window local PCA (pad=", PAD, ")...")
+  message("[GH_C] Stage 1: per-window local PCA (pad=", PAD, ")...")
   t1 <- proc.time()
 
   pc1_mat <- matrix(NA_real_, nrow = n_samp, ncol = n_win,
@@ -463,7 +467,7 @@ for (rds_f in rds_files) {
     n_used[w]   <- res$n_used
 
     if (w %% 1000 == 0) {
-      message("[S3v6c]   window ", w, " / ", n_win,
+      message("[GH_C]   window ", w, " / ", n_win,
               " (", round(100 * w / n_win, 1), "%)")
     }
   }
@@ -471,22 +475,22 @@ for (rds_f in rds_files) {
   lambda_ratio <- ifelse(is.finite(lambda_2) & lambda_2 > 0,
                          lambda_1 / lambda_2, NA_real_)
 
-  message("[S3v6c]   local PCA in ", round((proc.time() - t1)[3], 1), "s")
-  message("[S3v6c]   λ₁/λ₂ ratio: median=",
+  message("[GH_C]   local PCA in ", round((proc.time() - t1)[3], 1), "s")
+  message("[GH_C]   λ₁/λ₂ ratio: median=",
           round(median(lambda_ratio, na.rm = TRUE), 2),
           " p95=", round(quantile(lambda_ratio, 0.95, na.rm = TRUE), 2))
 
   # ── Robust |Z| profile (1D, sign-invariant) ──
-  message("[S3v6c] Stage 2: robust |Z| profile...")
+  message("[GH_C] Stage 2: robust |Z| profile...")
   z_res <- compute_z_profile(input_mat)
   z_profile    <- z_res$z_max
   z_top10_mean <- z_res$z_top10
-  message("[S3v6c]   |Z|: median=", round(median(z_profile, na.rm = TRUE), 2),
+  message("[GH_C]   |Z|: median=", round(median(z_profile, na.rm = TRUE), 2),
           " p95=", round(quantile(z_profile, 0.95, na.rm = TRUE), 2),
           " p99=", round(quantile(z_profile, 0.99, na.rm = TRUE), 2))
 
   # ── Sign alignment of loadings ──
-  message("[S3v6c] Stage 3: sign-aligning loadings to anchor window...")
+  message("[GH_C] Stage 3: sign-aligning loadings to anchor window...")
   if (ANCHOR_ARG == "auto") {
     # argmax(z_profile), tie-broken by lowest index, ignoring NAs
     z_for_anchor <- z_profile
@@ -495,10 +499,10 @@ for (rds_f in rds_files) {
   } else {
     anchor_idx <- as.integer(ANCHOR_ARG)
     if (is.na(anchor_idx) || anchor_idx < 1L || anchor_idx > n_win) {
-      stop("[S3v6c] FATAL: --anchor ", ANCHOR_ARG, " out of range 1..", n_win)
+      stop("[GH_C] FATAL: --anchor ", ANCHOR_ARG, " out of range 1..", n_win)
     }
   }
-  message("[S3v6c]   anchor window = ", anchor_idx,
+  message("[GH_C]   anchor window = ", anchor_idx,
           "  (z_profile=", round(z_profile[anchor_idx], 3), ")")
 
   aligned <- sign_align_loadings(pc1_mat, pc2_mat, anchor_idx)
@@ -506,29 +510,29 @@ for (rds_f in rds_files) {
   pc2_aligned_mat <- aligned$pc2_aligned
 
   # ── Sim_mat ──
-  message("[S3v6c] Stage 4: window×window sim_mat (|cor(pc1)| dense)...")
+  message("[GH_C] Stage 4: window×window sim_mat (|cor(pc1)| dense)...")
   t4 <- proc.time()
   sim_mat <- compute_sim_mat(pc1_mat)
   size_mb <- round(object.size(sim_mat) / 1024 / 1024, 1)
-  message("[S3v6c]   sim_mat: ", n_win, "×", n_win, " (", size_mb,
+  message("[GH_C]   sim_mat: ", n_win, "×", n_win, " (", size_mb,
           " MB in memory)  in ", round((proc.time() - t4)[3], 1), "s")
 
   # ── MDS coords ──
-  message("[S3v6c] Stage 5: cmdscale → MDS1, MDS2...")
+  message("[GH_C] Stage 5: cmdscale → MDS1, MDS2...")
   mds <- compute_mds(sim_mat)
-  message("[S3v6c]   MDS1 range = [",
+  message("[GH_C]   MDS1 range = [",
           round(min(mds$mds1, na.rm = TRUE), 3), ", ",
           round(max(mds$mds1, na.rm = TRUE), 3), "]   MDS2 range = [",
           round(min(mds$mds2, na.rm = TRUE), 3), ", ",
           round(max(mds$mds2, na.rm = TRUE), 3), "]")
 
   # ── Stage 6: secondary envelopes from local-PCA z_profile ──
-  # These are SECONDARY to the production STEP_C04b PASS-status runs.
+  # These are SECONDARY to the production STEP_GH_B PASS-status runs.
   # Keep them: when they agree with the v6 classifier's calls, that's
   # convergent evidence; when they disagree, that's diagnostic. Cheap
   # to compute, near-zero cost to ship even if junk on real data
   # (atlas just doesn't render them).
-  message("[S3v6c] Stage 6: secondary envelopes (z>", Z_THRESHOLD,
+  message("[GH_C] Stage 6: secondary envelopes (z>", Z_THRESHOLD,
           ", min=", MIN_L2_WIN, ", gap=", MERGE_GAP, ")...")
   sec_l2 <- call_envelopes(z_profile, Z_THRESHOLD, MIN_L2_WIN, MERGE_GAP)
   if (nrow(sec_l2) > 0) {
@@ -559,17 +563,17 @@ for (rds_f in rds_files) {
       sec_id   = paste0(chr, "_ghsl_sec_L1_", sprintf("%03d", seq_len(.N)))
     )]
   }
-  message("[S3v6c]   secondary L2: ", nrow(sec_l2), "  secondary L1: ", nrow(sec_l1))
+  message("[GH_C]   secondary L2: ", nrow(sec_l2), "  secondary L1: ", nrow(sec_l1))
   if (nrow(sec_l2) > 0) {
-    message("[S3v6c]   sec L2 span range: ",
+    message("[GH_C]   sec L2 span range: ",
             round(min(sec_l2$span_kb), 0), "–",
             round(max(sec_l2$span_kb), 0), " kb")
   }
-  message("[S3v6c]   (primary GHSL candidates come from STEP_C04b PASS-runs;",
+  message("[GH_C]   (primary GHSL candidates come from STEP_GH_B PASS-runs;",
           " these are an orthogonal local-PCA cross-check)")
 
   # ── Save ──
-  out_rds <- file.path(OUT_DIR, paste0(chr, ".ghsl_v6_localpca.rds"))
+  out_rds <- file.path(OUT_DIR, paste0(chr, ".ghsl_localpca.rds"))
   saveRDS(list(
     chrom                    = chr,
     sample_names             = snames,
@@ -603,15 +607,15 @@ for (rds_f in rds_files) {
       merge_gap              = MERGE_GAP,
       l1_merge_gap           = l1_merge_gap,
       generated_at           = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"),
-      generator              = "STEP_C04c_ghsl_local_pca.R",
-      primary_envelopes      = "STEP_C04b annot RDS (ghsl_v6_status == 'PASS') — turn-3 sources",
+      generator              = "STEP_GH_C_precompute.R",
+      primary_envelopes      = "STEP_GH_B annot RDS (ghsl_status == 'PASS') — turn-3 sources",
       secondary_envelopes    = "this script — local-PCA-derived |Z| threshold, orthogonal cross-check"
     )
   ), out_rds)
 
   fsize <- round(file.info(out_rds)$size / 1024 / 1024, 1)
-  message("[S3v6c]   saved: ", out_rds, " (", fsize, " MB on disk)")
-  message("[S3v6c] ", chr, " DONE in ", round((proc.time() - t0)[3], 1), "s")
+  message("[GH_C]   saved: ", out_rds, " (", fsize, " MB on disk)")
+  message("[GH_C] ", chr, " DONE in ", round((proc.time() - t0)[3], 1), "s")
 
   rm(m, input_mat, weight_mat, pc1_mat, pc2_mat,
      pc1_aligned_mat, pc2_aligned_mat, sim_mat)
@@ -621,6 +625,6 @@ for (rds_f in rds_files) {
 message("\n================================================================")
 message("[DONE] Turn 2: GHSL local PCA precomp complete")
 message("================================================================")
-message("  Output: ", OUT_DIR, "/<chr>.ghsl_v6_localpca.rds")
+message("  Output: ", OUT_DIR, "/<chr>.ghsl_localpca.rds")
 message("  Next:   turn 3 — JSON exporter v3 reads these RDS files and")
 message("          emits the ghsl_local_pca layer in <chr>_phase2_ghsl.json")

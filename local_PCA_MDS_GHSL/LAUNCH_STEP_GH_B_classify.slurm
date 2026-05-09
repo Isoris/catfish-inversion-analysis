@@ -6,22 +6,23 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
 #SBATCH -t 0:30:00
-#SBATCH -J inv_C04b_cls
-#SBATCH -o logs/inv_C04b_cls_%j.out
-#SBATCH -e logs/inv_C04b_cls_%j.err
+#SBATCH -J inv_GH_B_classify
+#SBATCH -o logs/inv_GH_B_classify_%j.out
+#SBATCH -e logs/inv_GH_B_classify_%j.err
 
 # =============================================================================
-# LAUNCH_STEP_C04b_ghsl_v6_classify.slurm
+# LAUNCH_STEP_GH_B_classify.slurm
 #
-# Phase 2 / 2e — GHSL v6 LIGHT CLASSIFIER. Runs in ~30 seconds per chromosome.
-# Iterate 100 times while tuning scoring cutoffs; no heavy recompute.
+# GHSL stage B — LIGHT CLASSIFIER. Runs in ~30 seconds per chromosome.
+# Iterate freely while tuning scoring cutoffs; no heavy recompute.
 #
-# Upstream:    STEP_C04 (matrices RDS)
-# Downstream:  STEP_D05_ghsl_stability (phase 2d candidate detection)
+# Upstream:    STEP_GH_A (matrices RDS)
+# Downstream:  STEP_GH_C (precompute / sim_mat) + STEP_GH_D (D17 detector)
+#              + STEP_GH_E (atlas JSON exporter)
 #
 # Usage:
-#   sbatch LAUNCH_STEP_C04b_ghsl_v6_classify.slurm                  # all chroms
-#   sbatch LAUNCH_STEP_C04b_ghsl_v6_classify.slurm C_gar_LG12       # single chrom
+#   sbatch LAUNCH_STEP_GH_B_classify.slurm                  # all chroms
+#   sbatch LAUNCH_STEP_GH_B_classify.slurm C_gar_LG12       # single chrom
 #
 # Tuning env overrides:
 #   GHSL_SCALE=50           rolling scale to use (must match a saved scale)
@@ -54,8 +55,8 @@ OUTDIR_RUN="${OUTDIR_RUN:-${GHSL_DIR}/classify}"
 mkdir -p "${OUTDIR_RUN}"
 
 [[ -d "${MATRICES_DIR}" ]] || {
-  echo "[C04b] ERROR: matrices dir missing — ${MATRICES_DIR}" >&2
-  echo "[C04b]        Run LAUNCH_STEP_C04_ghsl_v6_compute.slurm first." >&2
+  echo "[GH_B] ERROR: matrices dir missing — ${MATRICES_DIR}" >&2
+  echo "[GH_B]        Run LAUNCH_STEP_GH_A_compute.slurm first." >&2
   exit 2;
 }
 
@@ -77,13 +78,13 @@ MAX_K="${GHSL_MAX_K:-5}"
 INTERVAL_OPTS=""
 if [[ -n "${GHSL_INTERVALS:-}" ]]; then
   [[ -f "${GHSL_INTERVALS}" ]] || {
-    echo "[C04b] ERROR: GHSL_INTERVALS not found — ${GHSL_INTERVALS}" >&2; exit 2;
+    echo "[GH_B] ERROR: GHSL_INTERVALS not found — ${GHSL_INTERVALS}" >&2; exit 2;
   }
   INTERVAL_OPTS="--intervals ${GHSL_INTERVALS}"
 fi
 
 echo "================================================================"
-echo "  C04b: GHSL v6 LIGHT CLASSIFIER"
+echo "  GH_B: GHSL LIGHT CLASSIFIER"
 echo "  Chrom:         ${CHR_ARG:-all}"
 echo "  Matrices dir:  ${MATRICES_DIR}"
 echo "  Out dir:       ${OUTDIR_RUN}"
@@ -98,7 +99,7 @@ echo "  Started:       $(date)"
 echo "================================================================"
 
 "${RSCRIPT_BIN}" \
-  "${BASE}/inversion_modules/phase_2_discovery/2e_ghsl/STEP_C04b_snake3_ghsl_classify.R" \
+  "${BASE}/inversion_modules/phase_2_discovery/2e_ghsl/STEP_GH_B_classify.R" \
   "${MATRICES_DIR}" "${OUTDIR_RUN}" \
   ${CHR_OPTS} \
   --scale         "${SCALE}" \
@@ -110,10 +111,10 @@ echo "================================================================"
   ${INTERVAL_OPTS}
 
 echo "================================================================"
-echo "  C04b complete — $(date)"
+echo "  GH_B complete — $(date)"
 echo "  Outputs:"
-echo "    ${OUTDIR_RUN}/snake3v6_window_track.tsv.gz"
-echo "    ${OUTDIR_RUN}/snake3v6_karyotype_calls.tsv.gz"
-echo "    ${OUTDIR_RUN}/snake3v6_summary.tsv"
-[[ -n "${GHSL_INTERVALS:-}" ]] && echo "    ${OUTDIR_RUN}/snake3v6_interval_genotypes.tsv.gz"
+echo "    ${OUTDIR_RUN}/ghsl_window_track.tsv.gz"
+echo "    ${OUTDIR_RUN}/ghsl_karyotype_calls.tsv.gz"
+echo "    ${OUTDIR_RUN}/ghsl_summary.tsv"
+[[ -n "${GHSL_INTERVALS:-}" ]] && echo "    ${OUTDIR_RUN}/ghsl_interval_genotypes.tsv.gz"
 echo "================================================================"

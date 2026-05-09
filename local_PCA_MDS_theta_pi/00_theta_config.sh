@@ -150,7 +150,12 @@ export SCALE_LABEL="${PESTPG_SCALE}"   # e.g. "win10000.step2000"
 # Match the dosage scrubber's neighbourhood size so cross-stream candidate
 # overlap is computed on comparable window scales.
 export LOCAL_PCA_PAD=1                          # ±1 window neighbourhood for local PCA
-export LOCAL_PCA_NPC=2                          # PC1 + PC2 sufficient for sim_mat
+export LOCAL_PCA_NPC=4                          # sim_mat itself only needs PC1; v5
+                                                # keeps NPC=4 so PC_3_<sample> /
+                                                # PC_4_<sample> are written into the
+                                                # precomp dt for the atlas / carrier
+                                                # classification downstream.
+                                                # (v4 used NPC=2 — sim_mat-only.)
 export SIM_MAT_METRIC="abs_cosine"              # |cos(loadings_i, loadings_j)|
 
 # ── Envelope detection thresholds (mirror dosage envelopes) ───────────────

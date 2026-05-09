@@ -45,7 +45,10 @@
 suppressPackageStartupMessages({ library(data.table) })
 
 PAD                  <- 1L
-NPC                  <- 4L     # was 2 in v4; user wanted >= 4
+NPC                  <- 4L     # sim_mat itself only needs PC1; v5 keeps NPC=4 so
+                               # PC_3_<sample>/PC_4_<sample> land in the precomp dt
+                               # for atlas / carrier classification. (v4 = 2.)
+                               # Override precedence: default < $LOCAL_PCA_NPC < --npc.
 K_MDS                <- 20L    # MDS axes to compute/store (matches z-blocks 02a MDS_DIMS).
                                # Only the first SEED_MDS_AXES (= 5, hardcoded below) feed
                                # `max_abs_z`; the higher axes are kept for atlas / downstream.
@@ -54,6 +57,9 @@ SEED_MDS_AXES        <- 5L     # # of MDS axes whose z-scores contribute to max_
 SIM_BAND_HALF        <- 200L
 SIM_N_FULL_THRESHOLD <- 6000L
 NN_SIM_SCALES        <- c(20, 40, 80, 120, 160, 200, 240, 320)
+
+env_npc <- suppressWarnings(as.integer(Sys.getenv("LOCAL_PCA_NPC", unset = "")))
+if (length(env_npc) == 1L && is.finite(env_npc) && env_npc > 0L) NPC <- env_npc
 
 args <- commandArgs(trailingOnly = TRUE)
 CHROM <- NULL

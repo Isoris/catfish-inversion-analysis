@@ -6,30 +6,29 @@
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=16G
 #SBATCH -t 2:00:00
-#SBATCH -J inv_C04cd_ghsl
+#SBATCH -J inv_GH_CDE
 #SBATCH --array=1-28
-#SBATCH -o logs/inv_C04cd_ghsl_%A_%a.out
-#SBATCH -e logs/inv_C04cd_ghsl_%A_%a.err
+#SBATCH -o logs/inv_GH_CDE_%A_%a.out
+#SBATCH -e logs/inv_GH_CDE_%A_%a.err
 
 # =============================================================================
-# LAUNCH_STEP_C04cd_ghsl_enrichment.slurm
+# LAUNCH_STEP_GH_CDE_enrichment.slurm
 #
-# Phase 2 / 2e_ghsl — page-3 atlas enrichment runner. Per chromosome, runs:
-#   STEP_C04c_ghsl_local_pca   → <chr>.ghsl_v6_localpca.rds
-#   STEP_C04d_ghsl_d17_wrapper → <chr>_ghsl_d17{L1,L2}_{envelopes,boundaries}.tsv
-#   export_ghsl_to_json_v3     → <chr>_phase2_ghsl.json (page-3 atlas)
+# GHSL page-3 atlas enrichment runner. Per chromosome, runs C → D → E:
+#   STEP_GH_C_precompute    → <chr>.ghsl_localpca.rds
+#   STEP_GH_D_detect_L1L2   → <chr>_ghsl_d17{L1,L2}_{envelopes,boundaries}.tsv
+#   STEP_GH_E_atlas_json    → <chr>_phase2_ghsl.json (page-3 atlas)
 #
 # Upstream prerequisites:
-#   STEP_C04 v6 already ran  (matrices RDS + annot RDS + per_sample RDS + karyotypes RDS)
-#   STEP_C04b classifier ran (annot RDS carries PASS/WEAK/FAIL)
-#   D17 multipass scripts present at the configured paths (defaulted from inversion_config)
-#
-# Replaces the legacy run_ghsl_array.sh — same pipeline but config-driven and
-# wired for the new inversion_modules/ layout.
+#   STEP_GH_A already ran  (matrices RDS)
+#   STEP_GH_B classifier ran (annot RDS + per_sample RDS + karyotypes RDS,
+#                             carrying PASS/WEAK/FAIL primary candidates)
+#   D17 multipass scripts present at the configured paths (defaulted from
+#   inversion_config)
 #
 # Usage:
-#   sbatch LAUNCH_STEP_C04cd_ghsl_enrichment.slurm                 # array 1–28
-#   CHR_OVERRIDE=C_gar_LG28 sbatch --array=1 LAUNCH_STEP_C04cd_ghsl_enrichment.slurm
+#   sbatch LAUNCH_STEP_GH_CDE_enrichment.slurm                 # array 1–28
+#   CHR_OVERRIDE=C_gar_LG28 sbatch --array=1 LAUNCH_STEP_GH_CDE_enrichment.slurm
 #
 # Tuning env overrides:
 #   GHSL_PAD                 default 1   (local-PCA window padding)
@@ -60,7 +59,7 @@ if [[ ! -f "${CONFIG}" ]]; then
   done
 fi
 [[ -f "${CONFIG}" ]] || { echo "Missing config (tried new + legacy paths)" >&2; exit 1; }
-echo "[C04cd] using config: ${CONFIG}"
+echo "[GH_CDE] using config: ${CONFIG}"
 
 set -a
 source "${CONFIG}"
@@ -81,33 +80,33 @@ else
   CHR="$(printf "C_gar_LG%02d" "${SLURM_ARRAY_TASK_ID}")"
 fi
 
-# ── Resolve dirs (mirror the canonical C04 / C04b launchers) ──────────────
-GHSL_V6_DIR="${GHSL_V6_DIR:-${GHSL_DIR}/matrices}"
+# ── Resolve dirs (mirror the canonical GH_A / GH_B launchers) ─────────────
+GHSL_MATRICES_DIR="${GHSL_MATRICES_DIR:-${GHSL_DIR}/matrices}"
 GHSL_LOCALPCA_DIR="${GHSL_LOCALPCA_DIR:-${GHSL_DIR}/localpca}"
 GHSL_D17_DIR="${GHSL_D17_DIR:-${GHSL_DIR}/d17}"
 JSON_OUT="${JSON_OUT:-${GHSL_DIR}/json_out}"
 mkdir -p "${GHSL_LOCALPCA_DIR}" "${GHSL_D17_DIR}" "${JSON_OUT}"
 
 # Required upstream RDSes
-ANNOT_RDS="${GHSL_V6_DIR}/${CHR}.ghsl_v6.annot.rds"
-PERSAMP_RDS="${GHSL_V6_DIR}/${CHR}.ghsl_v6.per_sample.rds"
-KARYO_RDS="${GHSL_V6_DIR}/${CHR}.ghsl_v6.karyotypes.rds"
-MATRICES_RDS="${GHSL_V6_DIR}/${CHR}.ghsl_v6_matrices.rds"
+ANNOT_RDS="${GHSL_MATRICES_DIR}/${CHR}.ghsl_annot.rds"
+PERSAMP_RDS="${GHSL_MATRICES_DIR}/${CHR}.ghsl_per_sample.rds"
+KARYO_RDS="${GHSL_MATRICES_DIR}/${CHR}.ghsl_karyotypes.rds"
+MATRICES_RDS="${GHSL_MATRICES_DIR}/${CHR}.ghsl_matrices.rds"
 for f in "${MATRICES_RDS}" "${ANNOT_RDS}" "${PERSAMP_RDS}" "${KARYO_RDS}"; do
-  [[ -f "$f" ]] || { echo "[C04cd] ERROR: missing upstream RDS — $f" >&2; exit 2; }
+  [[ -f "$f" ]] || { echo "[GH_CDE] ERROR: missing upstream RDS — $f" >&2; exit 2; }
 done
 
 # D17 scripts (overridable via env)
 D17_L1_SCRIPT="${D17_L1_SCRIPT:-${BASE}/utils/d17/STEP_D17_multipass_L1_only_v7.R}"
 D17_L2_SCRIPT="${D17_L2_SCRIPT:-${BASE}/utils/d17/STEP_D17_multipass_L2_v8.R}"
 [[ -f "${D17_L1_SCRIPT}" ]] || {
-  echo "[C04cd] ERROR: D17 L1 script missing — ${D17_L1_SCRIPT}" >&2
-  echo "[C04cd]        Set D17_L1_SCRIPT env var to point at it." >&2
+  echo "[GH_CDE] ERROR: D17 L1 script missing — ${D17_L1_SCRIPT}" >&2
+  echo "[GH_CDE]        Set D17_L1_SCRIPT env var to point at it." >&2
   exit 2;
 }
 [[ -f "${D17_L2_SCRIPT}" ]] || {
-  echo "[C04cd] ERROR: D17 L2 script missing — ${D17_L2_SCRIPT}" >&2
-  echo "[C04cd]        Set D17_L2_SCRIPT env var to point at it." >&2
+  echo "[GH_CDE] ERROR: D17 L2 script missing — ${D17_L2_SCRIPT}" >&2
+  echo "[GH_CDE]        Set D17_L2_SCRIPT env var to point at it." >&2
   exit 2;
 }
 
@@ -125,7 +124,7 @@ MAX_K="${GHSL_MAX_K:-6}"
 SELF_DIR="${BASE}/inversion_modules/phase_2_discovery/2e_ghsl"
 
 echo "================================================================"
-echo "  C04cd: GHSL page-3 enrichment — ${CHR}"
+echo "  GH_CDE: GHSL page-3 enrichment — ${CHR}"
 echo "  Array task:    ${SLURM_ARRAY_TASK_ID:-?} of ${SLURM_ARRAY_TASK_MAX:-?}"
 echo "  Matrices RDS:  ${MATRICES_RDS}"
 echo "  Annot RDS:     ${ANNOT_RDS}"
@@ -143,12 +142,12 @@ echo "         primary_scale=${PRIMARY_SCALE} max_k=${MAX_K}"
 echo "  Started:       $(date)"
 echo "================================================================"
 
-# ── Stage 1: STEP_C04c local PCA ──────────────────────────────────────────
-echo "[$(date)] [${CHR}] === STEP_C04c local PCA ==="
-"${RSCRIPT_BIN}" "${SELF_DIR}/STEP_C04c_ghsl_local_pca.R" \
+# ── Stage 1: STEP_GH_C precompute (local PCA + sim_mat) ───────────────────
+echo "[$(date)] [${CHR}] === STEP_GH_C precompute ==="
+"${RSCRIPT_BIN}" "${SELF_DIR}/STEP_GH_C_precompute.R" \
   --chrom         "${CHR}" \
   --ghsl_matrices "${MATRICES_RDS}" \
-  --out_rds       "${GHSL_LOCALPCA_DIR}/${CHR}.ghsl_v6_localpca.rds" \
+  --out_rds       "${GHSL_LOCALPCA_DIR}/${CHR}.ghsl_localpca.rds" \
   --pad           "${PAD}" \
   --smoothing-scale "${SMOOTHING_SCALE}" \
   --anchor        "${ANCHOR}" \
@@ -157,23 +156,23 @@ echo "[$(date)] [${CHR}] === STEP_C04c local PCA ==="
   --min-l2-windows "${MIN_L2_WINDOWS}" \
   --merge-gap     "${MERGE_GAP}"
 
-# ── Stage 2: STEP_C04d D17 wrapper ────────────────────────────────────────
-echo "[$(date)] [${CHR}] === STEP_C04d D17 wrapper ==="
-"${RSCRIPT_BIN}" "${SELF_DIR}/STEP_C04d_ghsl_d17_wrapper.R" \
+# ── Stage 2: STEP_GH_D D17 wrapper (L1 + L2 boundary detection) ───────────
+echo "[$(date)] [${CHR}] === STEP_GH_D detect_L1L2 ==="
+"${RSCRIPT_BIN}" "${SELF_DIR}/STEP_GH_D_detect_L1L2.R" \
   --chrom          "${CHR}" \
-  --localpca       "${GHSL_LOCALPCA_DIR}/${CHR}.ghsl_v6_localpca.rds" \
+  --localpca       "${GHSL_LOCALPCA_DIR}/${CHR}.ghsl_localpca.rds" \
   --out_dir        "${GHSL_D17_DIR}" \
   --d17_l1_script  "${D17_L1_SCRIPT}" \
   --d17_l2_script  "${D17_L2_SCRIPT}"
 
-# ── Stage 3: export_ghsl_to_json_v3 ───────────────────────────────────────
-echo "[$(date)] [${CHR}] === export_ghsl_to_json_v3 ==="
-"${RSCRIPT_BIN}" "${SELF_DIR}/export_ghsl_to_json_v3.R" \
+# ── Stage 3: STEP_GH_E atlas JSON exporter ────────────────────────────────
+echo "[$(date)] [${CHR}] === STEP_GH_E atlas_json ==="
+"${RSCRIPT_BIN}" "${SELF_DIR}/STEP_GH_E_atlas_json.R" \
   --chrom          "${CHR}" \
   --annot_rds      "${ANNOT_RDS}" \
   --persamp_rds    "${PERSAMP_RDS}" \
   --karyo_rds      "${KARYO_RDS}" \
-  --localpca_rds   "${GHSL_LOCALPCA_DIR}/${CHR}.ghsl_v6_localpca.rds" \
+  --localpca_rds   "${GHSL_LOCALPCA_DIR}/${CHR}.ghsl_localpca.rds" \
   --d17_l1_env     "${GHSL_D17_DIR}/${CHR}_ghsl_d17L1_envelopes.tsv" \
   --d17_l2_env     "${GHSL_D17_DIR}/${CHR}_ghsl_d17L2_envelopes.tsv" \
   --d17_l1_bnd     "${GHSL_D17_DIR}/${CHR}_ghsl_d17L1_boundaries.tsv" \
@@ -183,8 +182,8 @@ echo "[$(date)] [${CHR}] === export_ghsl_to_json_v3 ==="
   --max_k          "${MAX_K}"
 
 echo "================================================================"
-echo "  C04cd complete — ${CHR} — $(date)"
-echo "  Local-PCA RDS: ${GHSL_LOCALPCA_DIR}/${CHR}.ghsl_v6_localpca.rds"
+echo "  GH_CDE complete — ${CHR} — $(date)"
+echo "  Local-PCA RDS: ${GHSL_LOCALPCA_DIR}/${CHR}.ghsl_localpca.rds"
 echo "  Phase-2 JSON:  ${JSON_OUT}/${CHR}/${CHR}_phase2_ghsl.json"
 echo "================================================================"
 

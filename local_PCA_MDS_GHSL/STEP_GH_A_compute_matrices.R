@@ -1,27 +1,27 @@
 #!/usr/bin/env Rscript
 
 # =============================================================================
-# STEP_C04_snake3_ghsl_v6.R
+# STEP_GH_A_compute_matrices.R
 #
-# SNAKE 3 v6: HEAVY ENGINE — Compute + Save Divergence Matrices
+# GHSL stage A — HEAVY ENGINE: Compute + Save Divergence Matrices
 #
 # PURPOSE:
-#   Run ONCE per chromosome. Loads 77M+ variants, computes per-sample
-#   within-haplotype divergence at raw window resolution, then applies
-#   rolling means at multiple configurable scales. Saves everything as
-#   RDS for the light classifier (STEP_C04b) to iterate on in 30 seconds.
+#   Run ONCE per chromosome. Loads 77M+ phased Clair3 variants, computes
+#   per-sample within-haplotype divergence at raw window resolution, then
+#   applies rolling means at multiple configurable scales. Saves everything
+#   as RDS for the light classifier (STEP_GH_B) to iterate on in ~30 s.
 #
 # WHAT IT COMPUTES:
 #   1. Raw div_mat [N_samples × N_windows]: ghsl_div = n_phased_het / n_total
 #   2. Raw het_mat [N_samples × N_windows]: het_div = n_all_het / n_total
-#   3. Rolling means at configurable scales (default: 20, 50, 100 windows)
+#   3. Rolling means at configurable scales (default: 10,20,30,40,50,100 win)
 #   4. Metadata: n_sites_mat, n_phased_het_mat, window coords, sample names
 #
 # WHAT IT DOES NOT DO:
-#   No scoring. No karyotype calling. No PASS/FAIL. That's STEP_C04b.
+#   No scoring. No karyotype calling. No PASS/FAIL. That's STEP_GH_B.
 #
 # OUTPUT:
-#   <outdir>/<chr>.ghsl_v6_matrices.rds  — one RDS per chromosome containing:
+#   <outdir>/<chr>.ghsl_matrices.rds  — one RDS per chromosome containing:
 #     $div_mat          — raw GHSL divergence [samples × windows]
 #     $het_mat          — raw het rate [samples × windows]
 #     $n_sites_mat      — total variants per sample × window
@@ -34,8 +34,8 @@
 #     $params           — list of parameters used
 #
 # Usage:
-#   Rscript STEP_C04_snake3_ghsl_v6.R <precomp_dir> <ghsl_prep_dir> <outdir> \
-#     [--chrom C_gar_LG01] [--scales 20,50,100] [--min_phased 3]
+#   Rscript STEP_GH_A_compute_matrices.R <precomp_dir> <ghsl_prep_dir> <outdir> \
+#     [--chrom C_gar_LG01] [--scales 10,20,30,40,50,100] [--min_phased 3]
 # =============================================================================
 
 suppressPackageStartupMessages({
@@ -50,7 +50,7 @@ suppressPackageStartupMessages({
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 3) stop(paste(
-  "Usage: Rscript STEP_C04_snake3_ghsl_v6.R <precomp_dir> <ghsl_prep_dir> <outdir> [opts]",
+  "Usage: Rscript STEP_GH_A_compute_matrices.R <precomp_dir> <ghsl_prep_dir> <outdir> [opts]",
   "  --chrom <chr>       Process single chromosome",
   "  --scales 20,50,100  Rolling window scales (comma-separated)",
   "  --min_phased 3      Min phased sites per sample per window",
@@ -103,21 +103,21 @@ while (i <= length(args)) {
 dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
 
 message("================================================================")
-message("[S3v6] Snake 3 v6: HEAVY ENGINE — Divergence Matrices")
+message("[GH_A] GHSL stage A: HEAVY ENGINE — Divergence Matrices")
 message("================================================================")
-message("[S3v6] Precomp:        ", precomp_dir)
-message("[S3v6] GHSL prep:      ", ghsl_prep_dir)
-message("[S3v6] Output:         ", outdir)
-message("[S3v6] MIN_PHASED=", MIN_PHASED_SITES)
-message("[S3v6] Rolling scales: ", paste(ROLLING_SCALES, collapse = ", "), " windows")
+message("[GH_A] Precomp:        ", precomp_dir)
+message("[GH_A] GHSL prep:      ", ghsl_prep_dir)
+message("[GH_A] Output:         ", outdir)
+message("[GH_A] MIN_PHASED=", MIN_PHASED_SITES)
+message("[GH_A] Rolling scales: ", paste(ROLLING_SCALES, collapse = ", "), " windows")
 
 # =============================================================================
 # LOAD PRECOMP (for window grid and sample names)
 # =============================================================================
 
 rds_files <- sort(list.files(precomp_dir, pattern = "\\.precomp\\.rds$", full.names = TRUE))
-if (length(rds_files) == 0) stop("[S3v6] FATAL: No .precomp.rds files in: ", precomp_dir)
-message("[S3v6] Found ", length(rds_files), " precomp RDS files")
+if (length(rds_files) == 0) stop("[GH_A] FATAL: No .precomp.rds files in: ", precomp_dir)
+message("[GH_A] Found ", length(rds_files), " precomp RDS files")
 
 # Chat 14 (2026-04-18) chunking fix:
 # Previously the loop below eagerly readRDS'd every chromosome's
@@ -147,7 +147,7 @@ if (length(chroms) > 0) {
   if (length(pc1_cols) > 0) precomp_sample_names <- sub("^PC_1_", "", pc1_cols)
   rm(obj); invisible(gc(verbose = FALSE, full = FALSE))
 }
-if (is.null(precomp_sample_names)) stop("[S3v6] FATAL: No PC_1_ columns found")
+if (is.null(precomp_sample_names)) stop("[GH_A] FATAL: No PC_1_ columns found")
 n_samples <- length(precomp_sample_names)
 sample_names <- precomp_sample_names
 
@@ -168,14 +168,14 @@ if (grepl("^Ind[0-9]", sample_names[1])) {
     real <- real[nzchar(real)]
     if (length(real) == n_samples) {
       sample_names <- real
-      message("[S3v6] Sample mapping: ", precomp_sample_names[1], " -> ", sample_names[1],
+      message("[GH_A] Sample mapping: ", precomp_sample_names[1], " -> ", sample_names[1],
               " (", n_samples, " samples)")
     }
   }
 }
 
-message("[S3v6] Samples: ", n_samples)
-message("[S3v6] Chromosomes: ", length(chroms))
+message("[GH_A] Samples: ", n_samples)
+message("[GH_A] Chromosomes: ", length(chroms))
 
 # =============================================================================
 # STAGE 1: Compute per-sample within-haplotype divergence (from v5, verbatim)
@@ -216,7 +216,7 @@ compute_divergence_matrix <- function(ghsl_by_window, dt, n_win, available_sampl
 
     if (wi %% 500 == 0) {
       n_scored <- sum(!is.na(ghsl_mat[, wi]))
-      message("[S3v6]   Window ", wi, "/", n_win, " (", n_scored, " samples scored)")
+      message("[GH_A]   Window ", wi, "/", n_win, " (", n_scored, " samples scored)")
     }
   }
 
@@ -241,7 +241,7 @@ compute_rolling_matrices <- function(raw_mat, scales) {
 
   for (K in scales) {
     label <- paste0("s", K)
-    message("[S3v6]   Rolling mean: scale=", K, " windows (~", round(K * 5, 0), " kb)")
+    message("[GH_A]   Rolling mean: scale=", K, " windows (~", round(K * 5, 0), " kb)")
 
     roll_mat <- matrix(NA_real_, nrow = n_samp, ncol = n_win,
                        dimnames = dimnames(raw_mat))
@@ -256,7 +256,7 @@ compute_rolling_matrices <- function(raw_mat, scales) {
     # Coverage check: how many cells went from NA to non-NA (rescue) or vice versa
     n_raw_valid  <- sum(!is.na(raw_mat))
     n_roll_valid <- sum(!is.na(roll_mat))
-    message("[S3v6]     Coverage: raw=", round(100 * n_raw_valid / length(raw_mat), 1),
+    message("[GH_A]     Coverage: raw=", round(100 * n_raw_valid / length(raw_mat), 1),
             "% → rolling=", round(100 * n_roll_valid / length(roll_mat), 1), "%")
 
     rolling[[label]] <- roll_mat
@@ -273,7 +273,7 @@ for (chr in chroms) {
   # Chat 14: load THIS chrom's precomp on demand (was: eager precomp_list)
   pc <- readRDS(precomp_index[[chr]])
   if (is.null(pc) || pc$n_windows < 20) {
-    message("[S3v6] SKIP ", chr, ": only ", pc$n_windows %||% 0, " windows")
+    message("[GH_A] SKIP ", chr, ": only ", pc$n_windows %||% 0, " windows")
     rm(pc); invisible(gc(verbose = FALSE, full = FALSE))
     next
   }
@@ -281,37 +281,37 @@ for (chr in chroms) {
   dt <- pc$dt
   n_win <- nrow(dt)
   message("\n================================================================")
-  message("[S3v6] ======= ", chr, " (", n_win, " windows) =======")
+  message("[GH_A] ======= ", chr, " (", n_win, " windows) =======")
   message("================================================================")
 
   # ── Load + pre-index ──
   ghsl_file <- file.path(ghsl_prep_dir, paste0(chr, ".merged_phased_snps.tsv.gz"))
   if (!file.exists(ghsl_file)) {
-    message("[S3v6] SKIP ", chr, ": no merged phased SNPs file")
+    message("[GH_A] SKIP ", chr, ": no merged phased SNPs file")
     next
   }
 
   t0 <- proc.time()
-  message("[S3v6] Loading ", basename(ghsl_file), " ...")
+  message("[GH_A] Loading ", basename(ghsl_file), " ...")
   ghsl_dt <- fread(ghsl_file)
-  message("[S3v6]   Raw: ", formatC(nrow(ghsl_dt), big.mark = ","), " variants in ",
+  message("[GH_A]   Raw: ", formatC(nrow(ghsl_dt), big.mark = ","), " variants in ",
           round((proc.time() - t0)[3], 1), "s")
 
   # QC filter
   if ("qual" %in% names(ghsl_dt)) ghsl_dt <- ghsl_dt[is.na(qual) | qual >= QUAL_MIN]
   if ("gq" %in% names(ghsl_dt)) ghsl_dt <- ghsl_dt[is.na(gq) | gq >= GQ_MIN]
-  message("[S3v6]   After QC: ", formatC(nrow(ghsl_dt), big.mark = ","))
+  message("[GH_A]   After QC: ", formatC(nrow(ghsl_dt), big.mark = ","))
 
   available_samples <- intersect(unique(ghsl_dt$sample_id), sample_names)
-  message("[S3v6]   Samples: ", length(available_samples), " / ", n_samples)
+  message("[GH_A]   Samples: ", length(available_samples), " / ", n_samples)
 
   if (length(available_samples) < 20) {
-    message("[S3v6] SKIP ", chr, ": only ", length(available_samples), " samples with data")
+    message("[GH_A] SKIP ", chr, ": only ", length(available_samples), " samples with data")
     next
   }
 
   # Pre-index by window
-  message("[S3v6]   Pre-indexing...")
+  message("[GH_A]   Pre-indexing...")
   t_idx <- proc.time()
   ghsl_dt <- ghsl_dt[sample_id %in% available_samples]
   window_starts <- dt$start_bp
@@ -322,11 +322,11 @@ for (chr in chroms) {
   ghsl_dt <- ghsl_dt[pos <= window_ends[window_id]]
 
   ghsl_by_window <- split(ghsl_dt, ghsl_dt$window_id)
-  message("[S3v6]   Indexed: ", formatC(nrow(ghsl_dt), big.mark = ","),
+  message("[GH_A]   Indexed: ", formatC(nrow(ghsl_dt), big.mark = ","),
           " variants in ", round((proc.time() - t_idx)[3], 1), "s")
 
   # ── STAGE 1: Raw divergence matrix ──
-  message("[S3v6] Stage 1: Computing raw divergence matrix...")
+  message("[GH_A] Stage 1: Computing raw divergence matrix...")
   t1 <- proc.time()
   div_result <- compute_divergence_matrix(ghsl_by_window, dt, n_win, available_samples)
   elapsed1 <- round((proc.time() - t1)[3], 1)
@@ -336,33 +336,33 @@ for (chr in chroms) {
 
   n_scored <- sum(!is.na(div_mat))
   n_possible <- length(available_samples) * n_win
-  message("[S3v6]   Raw divergence: ", formatC(n_scored, big.mark = ","),
+  message("[GH_A]   Raw divergence: ", formatC(n_scored, big.mark = ","),
           " / ", formatC(n_possible, big.mark = ","),
           " (", round(100 * n_scored / n_possible, 1), "%) in ", elapsed1, "s")
 
   # Quick stats
   ghsl_vals <- div_mat[!is.na(div_mat)]
   if (length(ghsl_vals) > 0) {
-    message("[S3v6]   GHSL: min=", round(min(ghsl_vals), 4),
+    message("[GH_A]   GHSL: min=", round(min(ghsl_vals), 4),
             " median=", round(median(ghsl_vals), 4),
             " max=", round(max(ghsl_vals), 4))
   }
 
   # ── STAGE 2: Rolling aggregation ──
-  message("[S3v6] Stage 2: Rolling aggregation...")
+  message("[GH_A] Stage 2: Rolling aggregation...")
   t2 <- proc.time()
   rolling_div <- compute_rolling_matrices(div_mat, ROLLING_SCALES)
   rolling_het <- compute_rolling_matrices(het_mat, ROLLING_SCALES)
   elapsed2 <- round((proc.time() - t2)[3], 1)
-  message("[S3v6]   Rolling computed in ", elapsed2, "s")
+  message("[GH_A]   Rolling computed in ", elapsed2, "s")
 
   # ── STAGE 3: Save RDS ──
-  message("[S3v6] Stage 3: Saving matrices...")
+  message("[GH_A] Stage 3: Saving matrices...")
 
   window_info <- dt[, .(global_window_id, start_bp, end_bp)]
   window_info[, pos_mb := round((start_bp + end_bp) / 2e6, 4)]
 
-  out_rds <- file.path(outdir, paste0(chr, ".ghsl_v6_matrices.rds"))
+  out_rds <- file.path(outdir, paste0(chr, ".ghsl_matrices.rds"))
   saveRDS(list(
     div_mat          = div_mat,
     het_mat          = het_mat,
@@ -382,20 +382,20 @@ for (chr in chroms) {
   ), out_rds)
 
   fsize <- round(file.info(out_rds)$size / 1e6, 1)
-  message("[S3v6]   Saved: ", out_rds, " (", fsize, " MB)")
+  message("[GH_A]   Saved: ", out_rds, " (", fsize, " MB)")
 
   # Free memory (chat 14: include pc from on-demand readRDS)
   rm(ghsl_dt, ghsl_by_window, div_result, pc, dt)
   gc(verbose = FALSE)
 
-  message("[S3v6] ", chr, " DONE in ", round((proc.time() - t0)[3], 1), "s total")
+  message("[GH_A] ", chr, " DONE in ", round((proc.time() - t0)[3], 1), "s total")
 }
 
 message("\n================================================================")
-message("[DONE] Snake 3 v6: Heavy engine complete")
+message("[DONE] GHSL stage A: Heavy engine complete")
 message("================================================================")
 message("  Output: ", outdir, "/")
-message("  Files:  <chr>.ghsl_v6_matrices.rds")
+message("  Files:  <chr>.ghsl_matrices.rds")
 message("")
-message("  Next: run STEP_C04b_snake3_ghsl_classify.R on these RDS files")
+message("  Next: run STEP_GH_B_classify.R on these RDS files")
 message("  That script loads in seconds — iterate on scoring/classification there.")

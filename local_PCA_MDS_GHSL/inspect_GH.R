@@ -1,13 +1,13 @@
 #!/usr/bin/env Rscript
 
 # =============================================================================
-# inspect_ghsl_v6.R — sanity check on STEP_C04_snake3_ghsl_v6.R output
+# inspect_GH.R — sanity check on STEP_GH_A_compute_matrices.R output
 #
-# Just reads <chr>.ghsl_v6_matrices.rds and tells you whether the GHSL run
+# Just reads <chr>.ghsl_matrices.rds and tells you whether the GHSL run
 # produced something sensible. No reclassification. No new architecture.
 #
 # Usage:
-#   Rscript inspect_ghsl_v6.R <ghsl_v6_matrices.rds> [out_dir]
+#   Rscript inspect_GH.R <ghsl_matrices.rds> [out_dir]
 #
 # What it prints:
 #   - Matrix dimensions (samples × windows)
@@ -31,7 +31,7 @@ suppressPackageStartupMessages({
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 1) {
-  stop("Usage: Rscript inspect_ghsl_v6.R <ghsl_v6_matrices.rds> [out_dir]")
+  stop("Usage: Rscript inspect_GH.R <ghsl_matrices.rds> [out_dir]")
 }
 rds_in  <- args[1]
 out_dir <- if (length(args) >= 2) args[2] else NA_character_

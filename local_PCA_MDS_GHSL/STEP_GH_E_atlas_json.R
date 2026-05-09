@@ -1,55 +1,53 @@
 #!/usr/bin/env Rscript
 # =============================================================================
-# export_ghsl_to_json_v3.R
+# STEP_GH_E_atlas_json.R
 # =============================================================================
-# Phase 2 / 2e_ghsl_discovery — page-3 atlas JSON exporter.
+# GHSL stage E — page-3 atlas JSON exporter.
 #
 # Consolidates GHSL outputs from FOUR sources into one page-3 JSON:
 #
-#   1. STEP_C04   v6 heavy:    <chr>.ghsl_v6.annot.rds         → tracks +
-#                              <chr>.ghsl_v6.per_sample.rds      ghsl_panel +
-#                              <chr>.ghsl_v6.karyotypes.rds      ghsl_kstripes +
-#                                                                ghsl_karyotype_runs +
-#                                                                ghsl_envelopes
-#                                                                (PASS-runs)
-#   2. STEP_C04c  local-PCA:   <chr>.ghsl_v6_localpca.rds      → ghsl_local_pca +
-#                                                                ghsl_secondary_envelopes
-#                                                                (|Z|-threshold)
-#   3. STEP_C04d  D17 wrapper: <chr>_ghsl_d17L1_envelopes.tsv  → ghsl_d17_envelopes
+#   1. STEP_GH_B classifier:   <chr>.ghsl_annot.rds         → tracks +
+#                              <chr>.ghsl_per_sample.rds      ghsl_panel +
+#                              <chr>.ghsl_karyotypes.rds      ghsl_kstripes +
+#                                                              ghsl_karyotype_runs +
+#                                                              ghsl_envelopes
+#                                                              (PASS-runs)
+#   2. STEP_GH_C precompute:   <chr>.ghsl_localpca.rds      → ghsl_local_pca +
+#                                                              ghsl_secondary_envelopes
+#                                                              (|Z|-threshold)
+#   3. STEP_GH_D D17 wrapper:  <chr>_ghsl_d17L1_envelopes.tsv  → ghsl_d17_envelopes
 #                              <chr>_ghsl_d17L2_envelopes.tsv    (boundary-detector)
 #                              <chr>_ghsl_d17L1_boundaries.tsv
 #                              <chr>_ghsl_d17L2_boundaries.tsv
 #   4. (optional) sample meta: <samples>.tsv (ind, cga, ancestry)
 #
-# Output: <out_dir>/<chr>/<chr>_phase2_ghsl.json (renamed from legacy
-# _phase4a_ghsl.json per the Phase 2 reshape; back-compat handled in the
-# atlas's loader).
+# Output: <out_dir>/<chr>/<chr>_phase2_ghsl.json
 #
 # Layer inventory:
 #   Layer name                  | Source                          | Status
 #   ---------------------------- | -------------------------------- | -------
-#   tracks                       | STEP_C04 annot RDS aggregates    | existing
-#   ghsl_panel                   | STEP_C04 per_sample RDS          | existing
+#   tracks                       | STEP_GH_B annot RDS aggregates   | existing
+#   ghsl_panel                   | STEP_GH_B per_sample RDS         | existing
 #   ghsl_kstripes                | computed K=2..6 stripe assigns   | existing
-#   ghsl_karyotype_runs          | STEP_C04 karyotypes RDS          | existing
-#   ghsl_local_pca               | STEP_C04c localpca RDS           | NEW turn 2/3
-#   ghsl_envelopes (PRIMARY)     | STEP_C04 annot PASS-runs         | NEW turn 3
-#   ghsl_secondary_envelopes     | STEP_C04c localpca z_profile     | NEW turn 3
-#   ghsl_d17_envelopes           | STEP_C04d D17 TSVs               | NEW turn 5
+#   ghsl_karyotype_runs          | STEP_GH_B karyotypes RDS         | existing
+#   ghsl_local_pca               | STEP_GH_C localpca RDS           | existing
+#   ghsl_envelopes (PRIMARY)     | STEP_GH_B annot PASS-runs        | existing
+#   ghsl_secondary_envelopes     | STEP_GH_C localpca z_profile     | existing
+#   ghsl_d17_envelopes           | STEP_GH_D D17 TSVs               | existing
 #
-# Asymmetry vs θπ: page 12 (STEP_TR_B emits its own JSON directly) reads only
+# Asymmetry vs θπ: page 12 (theta_pi atlas emitter) reads only
 # theta_pi_per_window + theta_pi_local_pca + theta_pi_envelopes (|Z|) and
 # now also theta_d17_envelopes (parallel D17 wrapper output). Same multi-
 # layer architecture, different layer set.
 #
 # Usage
 # -----
-#   Rscript export_ghsl_to_json_v3.R \
+#   Rscript STEP_GH_E_atlas_json.R \
 #     --chrom         C_gar_LG28 \
-#     --annot_rds     <ghsl_v6_dir>/<chrom>.ghsl_v6.annot.rds \
-#     --persamp_rds   <ghsl_v6_dir>/<chrom>.ghsl_v6.per_sample.rds \
-#     --karyo_rds     <ghsl_v6_dir>/<chrom>.ghsl_v6.karyotypes.rds \
-#     --localpca_rds  <localpca_dir>/<chrom>.ghsl_v6_localpca.rds \
+#     --annot_rds     <ghsl_dir>/<chrom>.ghsl_annot.rds \
+#     --persamp_rds   <ghsl_dir>/<chrom>.ghsl_per_sample.rds \
+#     --karyo_rds     <ghsl_dir>/<chrom>.ghsl_karyotypes.rds \
+#     --localpca_rds  <localpca_dir>/<chrom>.ghsl_localpca.rds \
 #     --d17_l1_env    <d17_dir>/<chrom>_ghsl_d17L1_envelopes.tsv \
 #     --d17_l2_env    <d17_dir>/<chrom>_ghsl_d17L2_envelopes.tsv \
 #     --d17_l1_bnd    <d17_dir>/<chrom>_ghsl_d17L1_boundaries.tsv \
@@ -61,7 +59,7 @@
 #     [--sim_mat_thumb_n 200]
 #
 # All --d17_* flags are OPTIONAL: if missing, ghsl_d17_envelopes layer is
-# omitted from the JSON. Same for --localpca_rds (turn 2 may not have run
+# omitted from the JSON. Same for --localpca_rds (STEP_GH_C may not have run
 # yet on all chromosomes when running the exporter genome-wide).
 # =============================================================================
 
@@ -103,16 +101,16 @@ dir.create(file.path(OUT_DIR, CHROM), recursive = TRUE, showWarnings = FALSE)
 OUT_JSON <- file.path(OUT_DIR, CHROM, paste0(CHROM, "_phase2_ghsl.json"))
 
 cat("================================================================\n")
-cat("[GHSL_EXPORT v3] Building page-3 JSON for ", CHROM, "\n", sep = "")
+cat("[GH_E] Building page-3 JSON for ", CHROM, "\n", sep = "")
 cat("================================================================\n")
-cat("[GHSL_EXPORT v3] annot:    ", ANNOT_RDS,    "\n", sep = "")
-cat("[GHSL_EXPORT v3] persamp:  ", PERSAMP_RDS,  "\n", sep = "")
-cat("[GHSL_EXPORT v3] karyo:    ", KARYO_RDS,    "\n", sep = "")
-cat("[GHSL_EXPORT v3] localpca: ", LOCALPCA_RDS %||% "(skipped)", "\n", sep = "")
-cat("[GHSL_EXPORT v3] d17 L1:   ", D17_L1_ENV   %||% "(skipped)", "\n", sep = "")
-cat("[GHSL_EXPORT v3] d17 L2:   ", D17_L2_ENV   %||% "(skipped)", "\n", sep = "")
-cat("[GHSL_EXPORT v3] samples:  ", SAMPLES_TSV  %||% "(none)",    "\n", sep = "")
-cat("[GHSL_EXPORT v3] output:   ", OUT_JSON,     "\n", sep = "")
+cat("[GH_E] annot:    ", ANNOT_RDS,    "\n", sep = "")
+cat("[GH_E] persamp:  ", PERSAMP_RDS,  "\n", sep = "")
+cat("[GH_E] karyo:    ", KARYO_RDS,    "\n", sep = "")
+cat("[GH_E] localpca: ", LOCALPCA_RDS %||% "(skipped)", "\n", sep = "")
+cat("[GH_E] d17 L1:   ", D17_L1_ENV   %||% "(skipped)", "\n", sep = "")
+cat("[GH_E] d17 L2:   ", D17_L2_ENV   %||% "(skipped)", "\n", sep = "")
+cat("[GH_E] samples:  ", SAMPLES_TSV  %||% "(none)",    "\n", sep = "")
+cat("[GH_E] output:   ", OUT_JSON,     "\n", sep = "")
 
 # ---- Helpers ----------------------------------------------------------------
 clean_numeric <- function(x, digits = 6) {
@@ -122,11 +120,11 @@ clean_numeric <- function(x, digits = 6) {
 }
 round4 <- function(x) round(x, 4)
 
-# ---- Load STEP_C04 v6 annot RDS ---------------------------------------------
-# Carries per-window stats: ghsl_v6_score, ghsl_v6_status (PASS/WEAK/FAIL),
-# div_median, rank_stability, plus window_info coordinates. STEP_C04 produces
+# ---- Load STEP_GH_B annot RDS -----------------------------------------------
+# Carries per-window stats: ghsl_score, ghsl_status (PASS/WEAK/FAIL),
+# div_median, rank_stability, plus window_info coordinates. STEP_GH_B produces
 # this; don't refactor.
-cat("\n[GHSL_EXPORT v3] Loading annot RDS\n")
+cat("\n[GH_E] Loading annot RDS\n")
 annot <- readRDS(ANNOT_RDS)
 if (is.data.frame(annot)) {
   annot_dt <- as.data.table(annot)
@@ -135,39 +133,40 @@ if (is.data.frame(annot)) {
 } else if (is.list(annot) && !is.null(annot$annot)) {
   annot_dt <- as.data.table(annot$annot)
 } else {
-  stop("[GHSL_EXPORT v3] annot RDS structure not recognized")
+  stop("[GH_E] annot RDS structure not recognized")
 }
 n_windows <- nrow(annot_dt)
-cat("[GHSL_EXPORT v3]   annot: ", n_windows, " windows\n", sep = "")
+cat("[GH_E]   annot: ", n_windows, " windows\n", sep = "")
 
-# Probe column names defensively (production v6 may rename across versions)
-status_col <- intersect(c("ghsl_v6_status", "ghsl_status", "status"),
+# Probe column names defensively (legacy ghsl_v6_* still accepted for
+# back-compat with already-generated RDS shards on the cluster)
+status_col <- intersect(c("ghsl_status", "ghsl_v6_status", "status"),
                         names(annot_dt))[1]
-score_col  <- intersect(c("ghsl_v6_score", "ghsl_score", "score"),
+score_col  <- intersect(c("ghsl_score", "ghsl_v6_score", "score"),
                         names(annot_dt))[1]
 if (is.na(status_col)) {
-  cat("[GHSL_EXPORT v3]   warning: no status column in annot RDS — ",
+  cat("[GH_E]   warning: no status column in annot RDS — ",
       "envelopes layer will be empty\n", sep = "")
 }
 
-# ---- Load STEP_C04 v6 per_sample RDS ----------------------------------------
+# ---- Load STEP_GH_B per_sample RDS ----------------------------------------
 # Carries div_roll[scale][n_samples × n_windows] — the rolling-smoothed
 # divergence panel rendered by the page-3-bis K-stripe heatmap and used by
 # the atlas's lines-color-mode picker for per-sample GHSL coloring.
-cat("[GHSL_EXPORT v3] Loading per_sample RDS\n")
+cat("[GH_E] Loading per_sample RDS\n")
 ps <- readRDS(PERSAMP_RDS)
 n_samples    <- ps$n_samples %||% length(ps$sample_names)
 sample_names <- ps$sample_names
 
-# ---- Load STEP_C04 v6 karyotypes RDS ----------------------------------------
-cat("[GHSL_EXPORT v3] Loading karyotypes RDS\n")
+# ---- Load STEP_GH_B karyotypes RDS ----------------------------------------
+cat("[GH_E] Loading karyotypes RDS\n")
 karyo <- readRDS(KARYO_RDS)
 
 # ---- Sample identity layer --------------------------------------------------
 sample_meta <- data.table(ind = sample_names, cga = sample_names,
                           ancestry = "unknown")
 if (!is.null(SAMPLES_TSV) && file.exists(SAMPLES_TSV)) {
-  cat("[GHSL_EXPORT v3] Loading sample metadata: ", SAMPLES_TSV, "\n", sep = "")
+  cat("[GH_E] Loading sample metadata: ", SAMPLES_TSV, "\n", sep = "")
   smeta <- fread(SAMPLES_TSV, header = TRUE)
   setnames(smeta, tolower(names(smeta)))
   if ("ind" %in% names(smeta)) {
@@ -214,7 +213,7 @@ build_tracks_layer <- function(annot_dt) {
   tracks
 }
 tracks_layer <- build_tracks_layer(annot_dt)
-cat("[GHSL_EXPORT v3]   tracks: ", length(tracks_layer),
+cat("[GH_E]   tracks: ", length(tracks_layer),
     " per-window aggregates\n", sep = "")
 
 # =============================================================================
@@ -223,7 +222,7 @@ cat("[GHSL_EXPORT v3]   tracks: ", length(tracks_layer),
 build_panel_layer <- function(ps, primary_scale) {
   div_roll <- ps$div_roll %||% ps$rolling
   if (is.null(div_roll)) {
-    warning("[GHSL_EXPORT v3] per_sample RDS has no div_roll/rolling matrices")
+    warning("[GH_E] per_sample RDS has no div_roll/rolling matrices")
     return(NULL)
   }
   # Pre-aggregate cohort-mean divergence at the primary scale (used by
@@ -252,7 +251,7 @@ build_panel_layer <- function(ps, primary_scale) {
   )
 }
 panel_layer <- build_panel_layer(ps, PRIMARY_SCALE)
-cat("[GHSL_EXPORT v3]   ghsl_panel: ", n_samples, " samples × ",
+cat("[GH_E]   ghsl_panel: ", n_samples, " samples × ",
     n_windows, " windows × ",
     if (!is.null(panel_layer)) length(panel_layer$div_roll) else 0,
     " scales\n", sep = "")
@@ -296,7 +295,7 @@ build_kstripes_layer <- function(ps, primary_scale, max_k) {
 }
 kstripes_layer <- build_kstripes_layer(ps, PRIMARY_SCALE, MAX_K)
 if (!is.null(kstripes_layer))
-  cat("[GHSL_EXPORT v3]   ghsl_kstripes: K=2..", MAX_K,
+  cat("[GH_E]   ghsl_kstripes: K=2..", MAX_K,
       " stripe assignments\n", sep = "")
 
 # =============================================================================
@@ -329,11 +328,11 @@ build_karyo_runs_layer <- function(karyo, n_samples) {
 }
 karyo_runs_layer <- build_karyo_runs_layer(karyo, n_samples)
 if (!is.null(karyo_runs_layer))
-  cat("[GHSL_EXPORT v3]   ghsl_karyotype_runs: ", karyo_runs_layer$n_runs,
+  cat("[GH_E]   ghsl_karyotype_runs: ", karyo_runs_layer$n_runs,
       " stable LOW/HIGH runs\n", sep = "")
 
 # =============================================================================
-# Layer: ghsl_envelopes  (PRIMARY — STEP_C04b PASS-runs, NEW turn 3)
+# Layer: ghsl_envelopes  (PRIMARY — STEP_GH_B PASS-runs)
 # =============================================================================
 # Lift contiguous PASS-status windows from annot_dt into L2 candidate runs.
 # Compute n_pass / n_weak / n_fail / mean_score / peak_score per run, plus
@@ -347,7 +346,7 @@ build_primary_envelopes_layer <- function(annot_dt, status_col, score_col) {
       schema_version = 2L,
       layer          = "ghsl_envelopes",
       chrom          = CHROM,
-      source         = paste0("STEP_C04b annot RDS (", status_col, " == 'PASS')"),
+      source         = paste0("STEP_GH_B annot RDS (", status_col, " == 'PASS')"),
       l2_envelopes   = list(),
       l1_envelopes   = list()
     ))
@@ -363,7 +362,7 @@ build_primary_envelopes_layer <- function(annot_dt, status_col, score_col) {
   if (length(pass_idx) == 0L) {
     return(list(
       schema_version = 2L, layer = "ghsl_envelopes", chrom = CHROM,
-      source = "STEP_C04b annot RDS (no PASS windows found)",
+      source = "STEP_GH_B annot RDS (no PASS windows found)",
       l2_envelopes = list(), l1_envelopes = list()
     ))
   }
@@ -444,7 +443,7 @@ build_primary_envelopes_layer <- function(annot_dt, status_col, score_col) {
     schema_version = 2L,
     layer          = "ghsl_envelopes",
     chrom          = CHROM,
-    source         = paste0("STEP_C04b annot RDS (", status_col, " == 'PASS')"),
+    source         = paste0("STEP_GH_B annot RDS (", status_col, " == 'PASS')"),
     z_threshold_equivalent = NA,
     l2_envelopes   = lapply(seq_len(nrow(l2_dt)), function(k) {
       list(l2_id = l2_dt$l2_id[k],
@@ -473,7 +472,7 @@ build_primary_envelopes_layer <- function(annot_dt, status_col, score_col) {
 }
 envelopes_layer <- build_primary_envelopes_layer(annot_dt, status_col, score_col)
 if (!is.null(envelopes_layer))
-  cat("[GHSL_EXPORT v3]   ghsl_envelopes (PRIMARY): ",
+  cat("[GH_E]   ghsl_envelopes (PRIMARY): ",
       length(envelopes_layer$l2_envelopes), " L2 + ",
       length(envelopes_layer$l1_envelopes), " L1\n", sep = "")
 
@@ -483,7 +482,7 @@ if (!is.null(envelopes_layer))
 local_pca_layer <- NULL
 sec_env_layer   <- NULL
 if (!is.null(LOCALPCA_RDS) && file.exists(LOCALPCA_RDS)) {
-  cat("[GHSL_EXPORT v3] Loading STEP_C04c localpca RDS\n")
+  cat("[GH_E] Loading STEP_GH_C localpca RDS\n")
   lp <- readRDS(LOCALPCA_RDS)
 
   # Pack sim_mat as upper triangle to halve serialization cost
@@ -542,7 +541,7 @@ if (!is.null(LOCALPCA_RDS) && file.exists(LOCALPCA_RDS)) {
       smoothing_input = lp$params$smoothing_scale %||% "none"
     )
   )
-  cat("[GHSL_EXPORT v3]   ghsl_local_pca: ", lp$n_samples, " samples × ",
+  cat("[GH_E]   ghsl_local_pca: ", lp$n_samples, " samples × ",
       lp$n_windows, " windows; sim_mat upper-triangle packed (",
       length(sim_packed), " floats)\n", sep = "")
 
@@ -570,14 +569,14 @@ if (!is.null(LOCALPCA_RDS) && file.exists(LOCALPCA_RDS)) {
     schema_version = 2L,
     layer          = "ghsl_secondary_envelopes",
     chrom          = CHROM,
-    source         = "STEP_C04c local-PCA z_profile threshold",
+    source         = "STEP_GH_C local-PCA z_profile threshold",
     z_threshold    = as.numeric(lp$params$z_threshold %||% 2.5),
     min_l2_windows = as.integer(lp$params$min_l2_windows %||% 5L),
     merge_gap      = as.integer(lp$params$merge_gap %||% 3L),
     secondary_l2_envelopes = sec_l2_records,
     secondary_l1_envelopes = sec_l1_records
   )
-  cat("[GHSL_EXPORT v3]   ghsl_secondary_envelopes: ",
+  cat("[GH_E]   ghsl_secondary_envelopes: ",
       length(sec_l2_records), " L2 + ",
       length(sec_l1_records), " L1\n", sep = "")
 }
@@ -588,7 +587,7 @@ if (!is.null(LOCALPCA_RDS) && file.exists(LOCALPCA_RDS)) {
 d17_layer <- NULL
 load_d17_tsv <- function(path, kind) {
   if (is.null(path) || !file.exists(path)) return(NULL)
-  cat("[GHSL_EXPORT v3] Loading D17 ", kind, " TSV: ",
+  cat("[GH_E] Loading D17 ", kind, " TSV: ",
       basename(path), "\n", sep = "")
   fread(path)
 }
@@ -639,14 +638,14 @@ if (!is.null(d17_l1_env) || !is.null(d17_l2_env) ||
     schema_version = 2L,
     layer          = "ghsl_d17_envelopes",
     chrom          = CHROM,
-    source         = "STEP_C04d D17 cross-block boundary detector",
+    source         = "STEP_GH_D D17 cross-block boundary detector",
     detector       = "STEP_D17_multipass_L1_only_v7.R + STEP_D17_multipass_L2_v8.R",
     l1_envelopes   = d17_env_to_records(d17_l1_env),
     l2_envelopes   = d17_env_to_records(d17_l2_env),
     l1_boundaries  = d17_bnd_to_records(d17_l1_bnd),
     l2_boundaries  = d17_bnd_to_records(d17_l2_bnd)
   )
-  cat("[GHSL_EXPORT v3]   ghsl_d17_envelopes: L1=",
+  cat("[GH_E]   ghsl_d17_envelopes: L1=",
       length(d17_layer$l1_envelopes), " L2=",
       length(d17_layer$l2_envelopes), " bL1=",
       length(d17_layer$l1_boundaries), " bL2=",
@@ -662,7 +661,7 @@ out <- list(
   n_windows       = as.integer(n_windows),
   n_samples       = as.integer(n_samples),
   `_generated_at` = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"),
-  `_generator`    = "export_ghsl_to_json_v3.R",
+  `_generator`    = "STEP_GH_E_atlas_json.R",
   samples = lapply(seq_len(nrow(sample_meta)), function(i) {
     list(ind = sample_meta$ind[i], cga = sample_meta$cga[i],
          ancestry = sample_meta$ancestry[i])
@@ -705,15 +704,15 @@ if (!is.null(d17_layer)) {
 out$`_layers_present` <- layers_present
 
 # ---- Write ------------------------------------------------------------------
-cat("\n[GHSL_EXPORT v3] Layers present: ", paste(layers_present, collapse = ", "),
+cat("\n[GH_E] Layers present: ", paste(layers_present, collapse = ", "),
     "\n", sep = "")
-cat("[GHSL_EXPORT v3] Serializing JSON...\n", sep = "")
+cat("[GH_E] Serializing JSON...\n", sep = "")
 t_ser <- proc.time()
 write_json(out, OUT_JSON,
            auto_unbox = TRUE, na = "null", pretty = FALSE, digits = NA)
-cat("[GHSL_EXPORT v3]   ser time: ",
+cat("[GH_E]   ser time: ",
     round((proc.time() - t_ser)[3], 1), "s\n", sep = "")
 
 fi <- file.info(OUT_JSON)
-cat("[GHSL_EXPORT v3] DONE — ", OUT_JSON, " (",
+cat("[GH_E] DONE — ", OUT_JSON, " (",
     round(fi$size / 1024 / 1024, 2), " MB)\n", sep = "")

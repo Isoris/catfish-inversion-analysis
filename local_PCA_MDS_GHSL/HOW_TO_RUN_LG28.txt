@@ -1,0 +1,77 @@
+# Open WSL, cd to the module
+cd /mnt/c/Users/quent/Desktop/catfish-inversion-analysis/local_PCA_MDS_GHSL
+
+# Pick a test chrom (the env vars below assume a valid 00_inversion_config.sh
+# is sourced; on the cluster the LAUNCH_STEP_GH_*.slurm files do this for you)
+CHR=C_gar_LG28
+
+# Five stages, A → B → C → D → E. The A and B stages each have their own
+# launcher. Stages C / D / E run together via LAUNCH_STEP_GH_CDE_enrichment.slurm.
+# Below are the bare-Rscript invocations for an interactive single-chrom run.
+
+# A — divergence matrices (heavy, ~1 hr; skip if already produced for this chrom)
+$RSCRIPT_BIN STEP_GH_A_compute_matrices.R \
+    "$PRECOMP_DIR_RUN" "$GHSL_PREP_DIR" "$GHSL_DIR/matrices" \
+    --chrom $CHR \
+    --scales 10,20,30,40,50,100 \
+    --min_phased 3
+
+# (optional) sanity check the matrices RDS
+$RSCRIPT_BIN inspect_GH.R "$GHSL_DIR/matrices/${CHR}.ghsl_matrices.rds"
+
+# B — classifier (~30 s; iterate on cutoffs here)
+$RSCRIPT_BIN STEP_GH_B_classify.R \
+    "$GHSL_DIR/matrices" "$GHSL_DIR/classify" \
+    --chrom $CHR \
+    --scale 50 \
+    --karyo_lo 0.15 --karyo_hi 0.70 --karyo_min_run 10
+
+#   (with intervals — enables Stage C interval k-means + Stage D per-sample CUSUM
+#    decomposition inside each interval)
+# $RSCRIPT_BIN STEP_GH_B_classify.R \
+#     "$GHSL_DIR/matrices" "$GHSL_DIR/classify" \
+#     --chrom $CHR --scale 50 \
+#     --intervals "$INTERVAL_FILE"
+
+# C — local PCA precompute (~5–10 min; builds sim_mat for D17)
+$RSCRIPT_BIN STEP_GH_C_precompute.R \
+    --chrom $CHR \
+    --ghsl_matrices "$GHSL_DIR/matrices/${CHR}.ghsl_matrices.rds" \
+    --out_rds "$GHSL_DIR/localpca/${CHR}.ghsl_localpca.rds" \
+    --pad 1 --smoothing-scale none --anchor auto \
+    --min-samples-per-window 50 --z-threshold 2.5 \
+    --min-l2-windows 5 --merge-gap 3
+
+# D — D17 boundary detector wrapper (L1 + L2; ~10–60 s)
+$RSCRIPT_BIN STEP_GH_D_detect_L1L2.R \
+    --chrom $CHR \
+    --localpca "$GHSL_DIR/localpca/${CHR}.ghsl_localpca.rds" \
+    --out_dir "$GHSL_DIR/d17" \
+    --d17_l1_script "$BASE/utils/d17/STEP_D17_multipass_L1_only_v7.R" \
+    --d17_l2_script "$BASE/utils/d17/STEP_D17_multipass_L2_v8.R"
+
+# E — page-3 atlas JSON exporter (combines B + C + D outputs)
+$RSCRIPT_BIN STEP_GH_E_atlas_json.R \
+    --chrom $CHR \
+    --annot_rds    "$GHSL_DIR/matrices/${CHR}.ghsl_annot.rds" \
+    --persamp_rds  "$GHSL_DIR/matrices/${CHR}.ghsl_per_sample.rds" \
+    --karyo_rds    "$GHSL_DIR/matrices/${CHR}.ghsl_karyotypes.rds" \
+    --localpca_rds "$GHSL_DIR/localpca/${CHR}.ghsl_localpca.rds" \
+    --d17_l1_env   "$GHSL_DIR/d17/${CHR}_ghsl_d17L1_envelopes.tsv" \
+    --d17_l2_env   "$GHSL_DIR/d17/${CHR}_ghsl_d17L2_envelopes.tsv" \
+    --d17_l1_bnd   "$GHSL_DIR/d17/${CHR}_ghsl_d17L1_boundaries.tsv" \
+    --d17_l2_bnd   "$GHSL_DIR/d17/${CHR}_ghsl_d17L2_boundaries.tsv" \
+    --out_dir      "$GHSL_DIR/json_out" \
+    --primary_scale s50 --max_k 6
+
+# Inspect what landed
+ls -la $GHSL_DIR/matrices/${CHR}.*
+ls -la $GHSL_DIR/classify/
+ls -la $GHSL_DIR/localpca/${CHR}.*
+ls -la $GHSL_DIR/d17/${CHR}_*
+ls -la $GHSL_DIR/json_out/${CHR}/
+
+# For the full 28-chrom genome run on the cluster, use the SLURM launchers:
+#   sbatch LAUNCH_STEP_GH_A_compute.slurm                        # array 1–28
+#   sbatch LAUNCH_STEP_GH_B_classify.slurm                       # all chroms
+#   sbatch LAUNCH_STEP_GH_CDE_enrichment.slurm                   # array 1–28 (C+D+E per chrom)

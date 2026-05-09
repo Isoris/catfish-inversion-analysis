@@ -6,30 +6,30 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=64G
 #SBATCH -t 2:00:00
-#SBATCH -J inv_C04_ghsl
+#SBATCH -J inv_GH_A_compute
 #SBATCH --array=1-28
-#SBATCH -o logs/inv_C04_ghsl_%A_%a.out
-#SBATCH -e logs/inv_C04_ghsl_%A_%a.err
+#SBATCH -o logs/inv_GH_A_compute_%A_%a.out
+#SBATCH -e logs/inv_GH_A_compute_%A_%a.err
 
 # =============================================================================
-# LAUNCH_STEP_C04_ghsl_v6_compute.slurm
+# LAUNCH_STEP_GH_A_compute.slurm
 #
-# Phase 2 / 2e — GHSL v6 HEAVY ENGINE. Run ONCE per chromosome.
+# GHSL stage A — HEAVY ENGINE. Run ONCE per chromosome.
 # Loads 77M+ phased Clair3 SNPs, computes within-sample haplotype divergence
 # at raw window resolution, applies rolling means at configurable scales,
-# saves matrices as RDS for the light classifier (STEP_C04b) to iterate on.
+# saves matrices as RDS for the light classifier (STEP_GH_B) to iterate on.
 #
 # Upstream:    prepare_ghsl_v3_merged.sh (ghsl_prep/<chr>.merged_phased_snps.tsv.gz)
-#              STEP_C01a_precompute (precomp/<chr>.precomp.rds for window coords)
-# Downstream:  STEP_C04b_snake3_ghsl_classify (light classifier, 30 s / chrom)
+#              dosage precomp (precomp/<chr>.precomp.rds for window coords)
+# Downstream:  STEP_GH_B_classify (light classifier, ~30 s / chrom)
 #
 # Usage:
-#   sbatch LAUNCH_STEP_C04_ghsl_v6_compute.slurm        # array 1–28, all chroms
-#   CHR_OVERRIDE=C_gar_LG12 sbatch --array=1 LAUNCH_STEP_C04_ghsl_v6_compute.slurm
+#   sbatch LAUNCH_STEP_GH_A_compute.slurm        # array 1–28, all chroms
+#   CHR_OVERRIDE=C_gar_LG12 sbatch --array=1 LAUNCH_STEP_GH_A_compute.slurm
 #     # single chrom — run as 1-task array, pass CHR_OVERRIDE for clarity
 #
-# Sizing: ~1h per chrom per the v6 README. 64G is comfortable for 226 samples
-# × a single chromosome. 4 CPU — the rolling stage is not highly parallel.
+# Sizing: ~1h per chrom. 64G is comfortable for 226 samples × a single
+# chromosome. 4 CPU — the rolling stage is not highly parallel.
 # =============================================================================
 
 set -euo pipefail
@@ -62,11 +62,11 @@ OUTDIR_RUN="${OUTDIR_RUN:-${GHSL_DIR}/matrices}"
 mkdir -p "${OUTDIR_RUN}"
 
 [[ -d "${PRECOMP_DIR_RUN}" ]] || {
-  echo "[C04] ERROR: precomp dir missing — ${PRECOMP_DIR_RUN}" >&2; exit 2;
+  echo "[GH_A] ERROR: precomp dir missing — ${PRECOMP_DIR_RUN}" >&2; exit 2;
 }
 [[ -d "${GHSL_PREP_DIR}" ]] || {
-  echo "[C04] ERROR: ghsl prep dir missing — ${GHSL_PREP_DIR}" >&2
-  echo "[C04]        Run utils/prepare_ghsl_v3_merged.sh first." >&2
+  echo "[GH_A] ERROR: ghsl prep dir missing — ${GHSL_PREP_DIR}" >&2
+  echo "[GH_A]        Run utils/prepare_ghsl_v3_merged.sh first." >&2
   exit 2;
 }
 
@@ -77,7 +77,7 @@ QUAL_MIN="${GHSL_QUAL_MIN:-20}"
 GQ_MIN="${GHSL_GQ_MIN:-10}"
 
 echo "================================================================"
-echo "  C04: GHSL v6 HEAVY ENGINE — ${CHR}"
+echo "  GH_A: GHSL HEAVY ENGINE — ${CHR}"
 echo "  Array task: ${SLURM_ARRAY_TASK_ID:-?} of ${SLURM_ARRAY_TASK_MAX:-?}"
 echo "  Precomp dir:   ${PRECOMP_DIR_RUN}"
 echo "  GHSL prep dir: ${GHSL_PREP_DIR}"
@@ -90,7 +90,7 @@ echo "  Started:       $(date)"
 echo "================================================================"
 
 "${RSCRIPT_BIN}" \
-  "${BASE}/inversion_modules/phase_2_discovery/2e_ghsl/STEP_C04_snake3_ghsl_v6.R" \
+  "${BASE}/inversion_modules/phase_2_discovery/2e_ghsl/STEP_GH_A_compute_matrices.R" \
   "${PRECOMP_DIR_RUN}" "${GHSL_PREP_DIR}" "${OUTDIR_RUN}" \
   --chrom       "${CHR}" \
   --scales      "${SCALES}" \
@@ -99,7 +99,7 @@ echo "================================================================"
   --gq_min      "${GQ_MIN}"
 
 echo "================================================================"
-echo "  C04 complete — ${CHR} — $(date)"
-echo "  Matrices RDS: ${OUTDIR_RUN}/${CHR}.ghsl_v6_matrices.rds"
-echo "  Next:         sbatch LAUNCH_STEP_C04b_ghsl_v6_classify.slurm"
+echo "  GH_A complete — ${CHR} — $(date)"
+echo "  Matrices RDS: ${OUTDIR_RUN}/${CHR}.ghsl_matrices.rds"
+echo "  Next:         sbatch LAUNCH_STEP_GH_B_classify.slurm"
 echo "================================================================"

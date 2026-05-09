@@ -1,13 +1,13 @@
 #!/usr/bin/env Rscript
 
 # =============================================================================
-# STEP_C04b_snake3_ghsl_classify.R
+# STEP_GH_B_classify.R
 #
-# SNAKE 3 v6: LIGHT CLASSIFIER — Scoring + Karyotype + Decomposition
+# GHSL stage B — LIGHT CLASSIFIER: Scoring + Karyotype + Decomposition
 #
 # PURPOSE:
-#   Loads the pre-computed rolling divergence matrices from STEP_C04 (v6).
-#   Runs in ~30 seconds per chromosome. Iterate 100 times while tuning.
+#   Loads the pre-computed rolling divergence matrices from STEP_GH_A.
+#   Runs in ~30 seconds per chromosome. Iterate freely while tuning.
 #
 # WHAT IT DOES:
 #   A. METRICS (on rolling-smoothed data):
@@ -28,16 +28,23 @@
 #      - Per sample: changepoint detection on rolling profile within interval
 #      - Group samples by changepoint location → sub-system membership
 #      - Detects when an interval contains 2+ overlapping inversion systems
+#      (This is GHSL's per-sample CUSUM, scoped per interval — analogous to
+#       theta_pi's TR_F per-carrier CUSUM but bundled into the classifier.)
 #
 # OUTPUT:
-#   snake3v6_window_track.tsv.gz       — per-window metrics (rolling-based)
-#   snake3v6_karyotype_calls.tsv.gz    — per-sample stable runs
-#   snake3v6_interval_genotypes.tsv.gz — per-sample × per-interval classification
-#   snake3v6_interval_decomp.tsv.gz    — sub-system decomposition (if intervals given)
-#   snake3v6_summary.tsv               — chromosome-level summary
+#   ghsl_window_track.tsv.gz       — per-window metrics (rolling-based)
+#   ghsl_karyotype_calls.tsv.gz    — per-sample stable runs
+#   ghsl_interval_genotypes.tsv.gz — per-sample × per-interval classification
+#   ghsl_interval_decomp.tsv.gz    — sub-system decomposition (if intervals given)
+#   ghsl_summary.tsv               — chromosome-level summary
+#
+#   Plus per-chromosome RDS shards consumed by STEP_GH_C / STEP_GH_E:
+#     annot/<chr>.ghsl_annot.rds       — thin per-window aggregates
+#     annot/<chr>.ghsl_karyotypes.rds  — per-sample stable LOW/HIGH runs
+#     per_sample/<chr>.ghsl_per_sample.rds — dense long-format panel
 #
 # Usage:
-#   Rscript STEP_C04b_snake3_ghsl_classify.R <matrices_dir> <outdir> \
+#   Rscript STEP_GH_B_classify.R <matrices_dir> <outdir> \
 #     [--chrom C_gar_LG01] \
 #     [--scale 50] \
 #     [--intervals <triangle_intervals.tsv.gz>] \
@@ -58,8 +65,8 @@ suppressPackageStartupMessages({
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 2) stop(paste(
-  "Usage: Rscript STEP_C04b_snake3_ghsl_classify.R <matrices_dir> <outdir> [opts]",
-  "  <matrices_dir>  Dir with *.ghsl_v6_matrices.rds from STEP_C04",
+  "Usage: Rscript STEP_GH_B_classify.R <matrices_dir> <outdir> [opts]",
+  "  <matrices_dir>  Dir with *.ghsl_matrices.rds from STEP_GH_A",
   "  <outdir>        Output directory",
   sep = "\n"
 ))
@@ -93,20 +100,20 @@ while (i <= length(args)) {
 dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
 
 message("================================================================")
-message("[S3v6b] Snake 3 v6b: LIGHT CLASSIFIER")
+message("[GH_B] GHSL stage B: LIGHT CLASSIFIER")
 message("================================================================")
-message("[S3v6b] Matrices:   ", matrices_dir)
-message("[S3v6b] Output:     ", outdir)
-message("[S3v6b] Scale:      s", SCALE, " (~", SCALE * 5, " kb rolling)")
-message("[S3v6b] Karyotype:  lo=", KARYO_LO, " hi=", KARYO_HI,
+message("[GH_B] Matrices:   ", matrices_dir)
+message("[GH_B] Output:     ", outdir)
+message("[GH_B] Scale:      s", SCALE, " (~", SCALE * 5, " kb rolling)")
+message("[GH_B] Karyotype:  lo=", KARYO_LO, " hi=", KARYO_HI,
         " min_run=", KARYO_MIN_RUN)
-if (!is.null(INTERVAL_FILE)) message("[S3v6b] Intervals:  ", INTERVAL_FILE)
+if (!is.null(INTERVAL_FILE)) message("[GH_B] Intervals:  ", INTERVAL_FILE)
 
 # Load intervals if provided
 intervals_dt <- NULL
 if (!is.null(INTERVAL_FILE) && file.exists(INTERVAL_FILE)) {
   intervals_dt <- fread(INTERVAL_FILE)
-  message("[S3v6b] Loaded ", nrow(intervals_dt), " intervals")
+  message("[GH_B] Loaded ", nrow(intervals_dt), " intervals")
 }
 
 # =============================================================================
@@ -245,11 +252,11 @@ compute_rolling_metrics <- function(roll_mat, rank_window = 5L,
   metrics[, div_contrast_z := fifelse(!is.na(div_contrast),
     (div_contrast - dc_med) / dc_mad, NA_real_)]
 
-  message("[S3v6b]   Baseline: rho_med=", round(rho_med, 4), " rho_mad=", round(rho_mad, 4),
+  message("[GH_B]   Baseline: rho_med=", round(rho_med, 4), " rho_mad=", round(rho_mad, 4),
           " contrast_med=", round(dc_med, 4), " contrast_mad=", round(dc_mad, 4))
 
   # Combined score
-  metrics[, ghsl_v6_score := fifelse(
+  metrics[, ghsl_score := fifelse(
     !is.na(rank_stability_z) & !is.na(div_contrast_z) & n_scored >= 20,
     pnorm(rank_stability_z) * 0.40 +
     pnorm(div_contrast_z)   * 0.25 +
@@ -259,10 +266,10 @@ compute_rolling_metrics <- function(roll_mat, rank_window = 5L,
   )]
 
   # Status
-  metrics[, ghsl_v6_status := fifelse(
-    is.na(ghsl_v6_score), "FAIL",
-    fifelse(ghsl_v6_score > 0.65 & rank_stability_z > 1.5, "PASS",
-    fifelse(ghsl_v6_score > 0.50 & rank_stability_z > 0.5, "WEAK", "FAIL"))
+  metrics[, ghsl_status := fifelse(
+    is.na(ghsl_score), "FAIL",
+    fifelse(ghsl_score > 0.65 & rank_stability_z > 1.5, "PASS",
+    fifelse(ghsl_score > 0.50 & rank_stability_z > 0.5, "WEAK", "FAIL"))
   )]
 
   list(metrics = metrics, rank_mat = rank_mat, smooth_rho = smooth_rho)
@@ -545,11 +552,11 @@ decompose_interval <- function(roll_mat, interval_windows, sample_classes) {
 # MAIN LOOP
 # =============================================================================
 
-rds_files <- sort(list.files(matrices_dir, pattern = "\\.ghsl_v6_matrices\\.rds$",
+rds_files <- sort(list.files(matrices_dir, pattern = "\\.ghsl_matrices\\.rds$",
                              full.names = TRUE))
-if (length(rds_files) == 0) stop("[S3v6b] FATAL: No .ghsl_v6_matrices.rds files in: ",
+if (length(rds_files) == 0) stop("[GH_B] FATAL: No .ghsl_matrices.rds files in: ",
                                   matrices_dir)
-message("[S3v6b] Found ", length(rds_files), " matrix files")
+message("[GH_B] Found ", length(rds_files), " matrix files")
 
 if (!is.null(CHROM_FILTER)) {
   rds_files <- rds_files[grepl(CHROM_FILTER, rds_files)]
@@ -564,7 +571,7 @@ all_summary    <- list()
 for (rds_f in rds_files) {
   t0 <- proc.time()
   message("\n================================================================")
-  message("[S3v6b] Loading: ", basename(rds_f))
+  message("[GH_B] Loading: ", basename(rds_f))
 
   mat_data <- readRDS(rds_f)
   chr         <- mat_data$chrom
@@ -574,32 +581,32 @@ for (rds_f in rds_files) {
   snames      <- mat_data$sample_names
   n_win       <- ncol(div_mat)
 
-  message("[S3v6b] ", chr, ": ", length(snames), " samples × ", n_win, " windows")
+  message("[GH_B] ", chr, ": ", length(snames), " samples × ", n_win, " windows")
 
   # Select rolling scale
   scale_key <- paste0("s", SCALE)
   if (!scale_key %in% names(mat_data$rolling)) {
     avail <- paste(names(mat_data$rolling), collapse = ", ")
-    message("[S3v6b] WARNING: scale '", scale_key, "' not found. Available: ", avail)
-    message("[S3v6b]   Falling back to first available scale")
+    message("[GH_B] WARNING: scale '", scale_key, "' not found. Available: ", avail)
+    message("[GH_B]   Falling back to first available scale")
     scale_key <- names(mat_data$rolling)[1]
-    message("[S3v6b]   Using: ", scale_key)
+    message("[GH_B]   Using: ", scale_key)
   }
 
   roll_mat <- mat_data$rolling[[scale_key]]
-  message("[S3v6b] Using rolling scale: ", scale_key)
+  message("[GH_B] Using rolling scale: ", scale_key)
 
   # ── A: Rolling metrics ──
-  message("[S3v6b] Computing rolling metrics...")
+  message("[GH_B] Computing rolling metrics...")
   result_A <- compute_rolling_metrics(roll_mat, rank_window = RANK_WINDOW,
                                        karyo_lo = KARYO_LO, karyo_hi = KARYO_HI)
   metrics  <- result_A$metrics
   rank_mat <- result_A$rank_mat
 
-  n_pass <- sum(metrics$ghsl_v6_status == "PASS", na.rm = TRUE)
-  n_weak <- sum(metrics$ghsl_v6_status == "WEAK", na.rm = TRUE)
-  n_fail <- sum(metrics$ghsl_v6_status == "FAIL", na.rm = TRUE)
-  message("[S3v6b]   PASS=", n_pass, " WEAK=", n_weak, " FAIL=", n_fail)
+  n_pass <- sum(metrics$ghsl_status == "PASS", na.rm = TRUE)
+  n_weak <- sum(metrics$ghsl_status == "WEAK", na.rm = TRUE)
+  n_fail <- sum(metrics$ghsl_status == "FAIL", na.rm = TRUE)
+  message("[GH_B]   PASS=", n_pass, " WEAK=", n_weak, " FAIL=", n_fail)
 
   # Add coords
   metrics[, `:=`(
@@ -612,7 +619,7 @@ for (rds_f in rds_files) {
   )]
 
   # ── B: Karyotype calling ──
-  message("[S3v6b] Calling karyotypes on rolling ranks...")
+  message("[GH_B] Calling karyotypes on rolling ranks...")
   karyo_dt <- call_karyotypes(rank_mat, min_run = KARYO_MIN_RUN,
                                karyo_lo = KARYO_LO, karyo_hi = KARYO_HI)
   if (nrow(karyo_dt) > 0) {
@@ -627,11 +634,11 @@ for (rds_f in rds_files) {
     n_inv <- sum(karyo_dt$call == "INV_INV")
     n_non <- sum(karyo_dt$call == "INV_nonINV")
     n_uniq <- length(unique(karyo_dt$sample_id))
-    message("[S3v6b]   Karyotypes: ", nrow(karyo_dt), " runs (",
+    message("[GH_B]   Karyotypes: ", nrow(karyo_dt), " runs (",
             n_inv, " INV/INV, ", n_non, " INV/nonINV) across ",
             n_uniq, " samples")
   } else {
-    message("[S3v6b]   No stable karyotype runs")
+    message("[GH_B]   No stable karyotype runs")
   }
 
   # ── C+D: Interval classification + decomposition ──
@@ -641,7 +648,7 @@ for (rds_f in rds_files) {
   if (!is.null(intervals_dt)) {
     chr_intervals <- intervals_dt[chrom == chr]
     if (nrow(chr_intervals) > 0) {
-      message("[S3v6b] Classifying ", nrow(chr_intervals), " intervals...")
+      message("[GH_B] Classifying ", nrow(chr_intervals), " intervals...")
 
       for (ii in seq_len(nrow(chr_intervals))) {
         intv <- chr_intervals[ii]
@@ -654,12 +661,12 @@ for (rds_f in rds_files) {
         win_idx  <- which(win_mask)
 
         if (length(win_idx) < 5) {
-          message("[S3v6b]   Interval ", intv_id, ": only ", length(win_idx),
+          message("[GH_B]   Interval ", intv_id, ": only ", length(win_idx),
                   " windows, skipping")
           next
         }
 
-        message("[S3v6b]   Interval ", intv_id, " (",
+        message("[GH_B]   Interval ", intv_id, " (",
                 round(intv_start / 1e6, 2), "-", round(intv_end / 1e6, 2),
                 " Mb, ", length(win_idx), " windows)")
 
@@ -679,7 +686,7 @@ for (rds_f in rds_files) {
         # Report
         class_tab <- table(cl_dt$interval_class)
         class_str <- paste(paste0(names(class_tab), "=", class_tab), collapse = " ")
-        message("[S3v6b]     k=", cl_dt$interval_k[1],
+        message("[GH_B]     k=", cl_dt$interval_k[1],
                 " sil=", round(cl_dt$silhouette[1], 3),
                 " | ", class_str)
 
@@ -700,16 +707,16 @@ for (rds_f in rds_files) {
 
           n_clusters <- length(unique(dec_dt$cp_cluster))
           if (n_clusters > 1) {
-            message("[S3v6b]     Decomposition: ", n_clusters,
+            message("[GH_B]     Decomposition: ", n_clusters,
                     " sub-systems detected (changepoint clusters)")
             for (cc in sort(unique(dec_dt$cp_cluster))) {
               cc_dt <- dec_dt[cp_cluster == cc]
-              message("[S3v6b]       Cluster ", cc, ": n=", nrow(cc_dt),
+              message("[GH_B]       Cluster ", cc, ": n=", nrow(cc_dt),
                       " median_cp=", round(median(cc_dt$changepoint_mb), 2), " Mb",
                       " mean_asymm=", round(mean(cc_dt$asymmetry), 3))
             }
           } else {
-            message("[S3v6b]     No sub-system decomposition (single changepoint cluster)")
+            message("[GH_B]     No sub-system decomposition (single changepoint cluster)")
           }
 
           chr_decomp_dt <- rbind(chr_decomp_dt, dec_dt, fill = TRUE)
@@ -726,15 +733,15 @@ for (rds_f in rds_files) {
   # Tier-3, run_all.R 2d block scoring, utils/lib_ghsl_panel.R) read.
   #
   # Files:
-  #   annot/<chr>.ghsl_v6.annot.rds      — thin per-window aggregates
+  #   annot/<chr>.ghsl_annot.rds      — thin per-window aggregates
   #                                         (one row per window, no sample
   #                                         dimension). Consumed by
   #                                         run_all.R 2d block scoring.
-  #   annot/<chr>.ghsl_v6.karyotypes.rds — per-sample stable LOW/HIGH runs
+  #   annot/<chr>.ghsl_karyotypes.rds — per-sample stable LOW/HIGH runs
   #                                         (one row per run). Consumed by
   #                                         lib_ghsl_confirmation.R for
   #                                         Tier-3 SPLIT detection.
-  #   per_sample/<chr>.ghsl_v6.per_sample.rds — dense long-format panel
+  #   per_sample/<chr>.ghsl_per_sample.rds — dense long-format panel
   #                                         (one row per sample×window).
   #                                         Carries divergence and rank
   #                                         at all rolling scales. The
@@ -752,20 +759,20 @@ for (rds_f in rds_files) {
   # div_sd, div_iqr, div_skew, div_bimodal, n_low_div, n_high_div,
   # n_mid_div, low_div_tightness, high_div_tightness, mid_div_spread,
   # rank_stability, rank_stability_z, div_contrast, div_contrast_z,
-  # ghsl_v6_score, ghsl_v6_status, chrom, global_window_id, start_bp,
+  # ghsl_score, ghsl_status, chrom, global_window_id, start_bp,
   # end_bp, pos_mb, rolling_scale.
-  annot_rds <- file.path(annot_outdir, paste0(chr, ".ghsl_v6.annot.rds"))
+  annot_rds <- file.path(annot_outdir, paste0(chr, ".ghsl_annot.rds"))
   saveRDS(metrics, annot_rds)
-  message("[S3v6b]   annot RDS: ", annot_rds,
+  message("[GH_B]   annot RDS: ", annot_rds,
           " (", nrow(metrics), " windows)")
 
   # --- karyotypes RDS (per-sample stable runs) ---
   # karyo_dt already has: sample_id, window_start, window_end, n_windows,
   # call, mean_rank, chrom, start_bp, end_bp, start_mb, end_mb,
   # rolling_scale.
-  karyo_rds <- file.path(annot_outdir, paste0(chr, ".ghsl_v6.karyotypes.rds"))
+  karyo_rds <- file.path(annot_outdir, paste0(chr, ".ghsl_karyotypes.rds"))
   saveRDS(karyo_dt, karyo_rds)
-  message("[S3v6b]   karyotypes RDS: ", karyo_rds,
+  message("[GH_B]   karyotypes RDS: ", karyo_rds,
           " (", nrow(karyo_dt), " runs)")
 
   # --- per-sample panel RDS (dense, long-format, multi-scale) ---
@@ -774,7 +781,7 @@ for (rds_f in rds_files) {
   # samples at a given window; duplicated for join convenience).
   #
   # Available scales come from mat_data$rolling — which is every scale
-  # the heavy engine (STEP_C04) was invoked with. Default is
+  # the heavy engine (STEP_GH_A) was invoked with. Default is
   # s10/s20/s30/s40/s50/s100.
   scale_keys <- names(mat_data$rolling)
   n_samp_pan <- length(snames)
@@ -869,8 +876,8 @@ for (rds_f in rds_files) {
 
   # Window-level columns (same value for all samples at a given window,
   # but carrying them in the panel saves a join for most consumers).
-  panel_dt[, ghsl_v6_score   := metrics$ghsl_v6_score[win_idx_vec]]
-  panel_dt[, ghsl_v6_status  := metrics$ghsl_v6_status[win_idx_vec]]
+  panel_dt[, ghsl_score   := metrics$ghsl_score[win_idx_vec]]
+  panel_dt[, ghsl_status  := metrics$ghsl_status[win_idx_vec]]
   panel_dt[, rank_stability  := metrics$rank_stability[win_idx_vec]]
   panel_dt[, div_contrast_z  := metrics$div_contrast_z[win_idx_vec]]
   panel_dt[, div_bimodal     := metrics$div_bimodal[win_idx_vec]]
@@ -888,14 +895,14 @@ for (rds_f in rds_files) {
     sample_order     = snames,
     window_info      = window_info,
     generated_at     = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"),
-    classifier       = "STEP_C04b_snake3_ghsl_classify.R (v6, chat-14 patched)"
+    classifier       = "STEP_GH_B_classify.R"
   )
   attr(panel_dt, "ghsl_panel_meta") <- panel_meta
 
-  panel_rds <- file.path(panel_outdir, paste0(chr, ".ghsl_v6.per_sample.rds"))
+  panel_rds <- file.path(panel_outdir, paste0(chr, ".ghsl_per_sample.rds"))
   saveRDS(panel_dt, panel_rds)
   fsize <- round(file.info(panel_rds)$size / 1e6, 1)
-  message("[S3v6b]   per-sample panel RDS: ", panel_rds,
+  message("[GH_B]   per-sample panel RDS: ", panel_rds,
           " (", nrow(panel_dt), " rows, ", fsize, " MB)")
 
   rm(panel_dt, win_idx_vec, samp_vec, gwid_vec, start_vec, end_vec,
@@ -919,14 +926,14 @@ for (rds_f in rds_files) {
   )
 
   elapsed <- round((proc.time() - t0)[3], 1)
-  message("[S3v6b] ", chr, " DONE in ", elapsed, "s")
+  message("[GH_B] ", chr, " DONE in ", elapsed, "s")
 }
 
 # =============================================================================
 # WRITE OUTPUTS
 # =============================================================================
 
-message("\n[S3v6b] Writing outputs...")
+message("\n[GH_B] Writing outputs...")
 
 metrics_dt  <- if (length(all_metrics) > 0) rbindlist(all_metrics, fill = TRUE) else data.table()
 karyo_dt    <- if (length(all_karyo) > 0) rbindlist(all_karyo, fill = TRUE) else data.table()
@@ -934,27 +941,27 @@ intv_dt     <- if (length(all_interval) > 0) rbindlist(all_interval, fill = TRUE
 decomp_dt   <- if (length(all_decomp) > 0) rbindlist(all_decomp, fill = TRUE) else data.table()
 summ_dt     <- if (length(all_summary) > 0) rbindlist(all_summary) else data.table()
 
-f_track <- file.path(outdir, "snake3v6_window_track.tsv.gz")
+f_track <- file.path(outdir, "ghsl_window_track.tsv.gz")
 fwrite(metrics_dt, f_track, sep = "\t")
-message("[S3v6b] Window track: ", f_track, " (", nrow(metrics_dt), " rows)")
+message("[GH_B] Window track: ", f_track, " (", nrow(metrics_dt), " rows)")
 
-f_karyo <- file.path(outdir, "snake3v6_karyotype_calls.tsv.gz")
+f_karyo <- file.path(outdir, "ghsl_karyotype_calls.tsv.gz")
 fwrite(karyo_dt, f_karyo, sep = "\t")
-message("[S3v6b] Karyotype calls: ", f_karyo, " (", nrow(karyo_dt), " rows)")
+message("[GH_B] Karyotype calls: ", f_karyo, " (", nrow(karyo_dt), " rows)")
 
 if (nrow(intv_dt) > 0) {
-  f_intv <- file.path(outdir, "snake3v6_interval_genotypes.tsv.gz")
+  f_intv <- file.path(outdir, "ghsl_interval_genotypes.tsv.gz")
   fwrite(intv_dt, f_intv, sep = "\t")
-  message("[S3v6b] Interval genotypes: ", f_intv, " (", nrow(intv_dt), " rows)")
+  message("[GH_B] Interval genotypes: ", f_intv, " (", nrow(intv_dt), " rows)")
 }
 
 if (nrow(decomp_dt) > 0) {
-  f_decomp <- file.path(outdir, "snake3v6_interval_decomp.tsv.gz")
+  f_decomp <- file.path(outdir, "ghsl_interval_decomp.tsv.gz")
   fwrite(decomp_dt, f_decomp, sep = "\t")
-  message("[S3v6b] Decomposition: ", f_decomp, " (", nrow(decomp_dt), " rows)")
+  message("[GH_B] Decomposition: ", f_decomp, " (", nrow(decomp_dt), " rows)")
 }
 
-f_summ <- file.path(outdir, "snake3v6_summary.tsv")
+f_summ <- file.path(outdir, "ghsl_summary.tsv")
 fwrite(summ_dt, f_summ, sep = "\t")
 
 message("\n================================================================")
@@ -962,8 +969,8 @@ message("[DONE] Snake 3 v6b: Light Classifier")
 message("================================================================")
 message("  Track:      ", f_track)
 message("  Karyotype:  ", f_karyo)
-if (nrow(intv_dt) > 0) message("  Intervals:  ", file.path(outdir, "snake3v6_interval_genotypes.tsv.gz"))
-if (nrow(decomp_dt) > 0) message("  Decomp:     ", file.path(outdir, "snake3v6_interval_decomp.tsv.gz"))
+if (nrow(intv_dt) > 0) message("  Intervals:  ", file.path(outdir, "ghsl_interval_genotypes.tsv.gz"))
+if (nrow(decomp_dt) > 0) message("  Decomp:     ", file.path(outdir, "ghsl_interval_decomp.tsv.gz"))
 message("  Summary:    ", f_summ)
 
 if (nrow(summ_dt) > 0) {
