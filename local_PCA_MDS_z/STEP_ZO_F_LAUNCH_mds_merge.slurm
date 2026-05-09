@@ -4,19 +4,19 @@
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=32G
 #SBATCH -t 1:00:00
-#SBATCH -J inv_02b_merge
-#SBATCH -o logs/inv_02b_merge.%j.out
-#SBATCH -e logs/inv_02b_merge.%j.err
+#SBATCH -J inv_F_merge
+#SBATCH -o logs/inv_F_merge.%j.out
+#SBATCH -e logs/inv_F_merge.%j.err
 
 # =============================================================================
-# 02b_LAUNCH_mds_merge.slurm  (v8.5 / consolidated layout v1.0)
+# STEP_ZO_F_LAUNCH_mds_merge.slurm  (v8.5 / consolidated layout v1.0)
 #
 # STAGE 2 (merge): single short job. Stitches per-focal-chr MDS RDS files in
 # tmp/ into the final inversion_localpca.mds.rds (with $per_chr structure
 # every downstream script expects), plus candidate-region detection.
 #
-# Submit AFTER 02a stage1 array job completes:
-#   sbatch --dependency=afterok:<JOBID_02a> 02b_LAUNCH_mds_merge.slurm
+# Submit AFTER STEP_ZO_E stage1 array job completes:
+#   sbatch --dependency=afterok:<JOBID_E> STEP_ZO_F_LAUNCH_mds_merge.slurm
 # =============================================================================
 
 set -euo pipefail
@@ -39,18 +39,18 @@ MIN_WINDOWS="${MIN_WINDOWS:-3}"
 
 cat <<EOF
 ================================================================
-  02b mds_merge
+  STEP_ZO_F mds_merge
   tmp dir  : ${TMPDIR_IN}
   outprefix: ${OUTPREFIX}
   mode=${MDS_MODE}  gap_bp=${GAP_BP}  min_windows=${MIN_WINDOWS}
 ================================================================
 EOF
 
-"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_02b_mds_merge.R" \
+"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_F_mds_merge.R" \
   --tmpdir      "${TMPDIR_IN}" \
   --outprefix   "${OUTPREFIX}" \
   --mds_mode    "${MDS_MODE}" \
   --gap_bp      "${GAP_BP}" \
   --min_windows "${MIN_WINDOWS}"
 
-echo "[DONE] 02b — $(date)"
+echo "[DONE] STEP_ZO_F — $(date)"

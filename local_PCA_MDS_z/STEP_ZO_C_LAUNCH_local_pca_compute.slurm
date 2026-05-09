@@ -4,19 +4,19 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=48G
 #SBATCH -t 6:00:00
-#SBATCH -J inv_01b_compute
-#SBATCH -o logs/inv_01b_compute.%A_%a.out
-#SBATCH -e logs/inv_01b_compute.%A_%a.err
+#SBATCH -J inv_C_compute
+#SBATCH -o logs/inv_C_compute.%A_%a.out
+#SBATCH -e logs/inv_C_compute.%A_%a.err
 
 # =============================================================================
-# 01b_LAUNCH_local_pca_compute.slurm   (v8.5 / consolidated layout v1.0)
+# STEP_ZO_C_LAUNCH_local_pca_compute.slurm   (v8.5 / consolidated layout v1.0)
 #
 # STAGE 1 (compute): one SLURM array task per chromosome. Sliding-window local
 # PCA on dosage matrix. Writes per-chrom RDS with window_id = NA. The merge
-# step (01c) assigns global window_ids.
+# step (D) assigns global window_ids.
 #
 # Submit:
-#   sbatch --array=0-27 01b_LAUNCH_local_pca_compute.slurm chrom.list
+#   sbatch --array=0-27 STEP_ZO_C_LAUNCH_local_pca_compute.slurm chrom.list
 #
 # Output (path_localpca_zblocks/01_local_pca/tmp/):
 #   <chr>.window_pca_tmp.rds, <chr>.chr_meta.tsv.gz, <chr>.pca_table.tsv.gz,
@@ -51,7 +51,7 @@ CHROM="$(sed -n "${LINE}p" "${CHROM_LIST}")"
 
 cat <<EOF
 ================================================================
-  01b local_pca_compute  —  ${CHROM}
+  STEP_ZO_C local_pca_compute  —  ${CHROM}
   Array task : ${SLURM_ARRAY_TASK_ID}/${SLURM_ARRAY_TASK_MAX:-?}
   Dosage dir : ${DOSAGE_DIR}
   Out dir    : ${OUTDIR}
@@ -59,7 +59,7 @@ cat <<EOF
 ================================================================
 EOF
 
-"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_01b_local_pca_compute.R" \
+"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_C_local_pca_compute.R" \
   --dosage_dir "${DOSAGE_DIR}" \
   --outdir     "${OUTDIR}" \
   --chrom      "${CHROM}" \
@@ -67,4 +67,4 @@ EOF
   --step       "${STEP_SIZE}" \
   --npc        "${NPC_ARG}"
 
-echo "[DONE] 01b — ${CHROM} — $(date)"
+echo "[DONE] STEP_ZO_C — ${CHROM} — $(date)"

@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 04to08b_run_one_chrom.sh
+# STEP_ZO_HtoM_run_one_chrom.sh
 #
-# Run steps 04 → 05 → 06 → 07 → 08b for ONE chromosome with canonical defaults.
-# All canonical parameters are baked in (history lines 19548 → 19650). The
-# only required arg is the chromosome label.
+# Run steps H → I → J → K → M (detect_L1 → plot_L1 → detect_L2 → plot_L2 →
+# export_atlas_json) for ONE chromosome with canonical defaults. All canonical
+# parameters are baked in (history lines 19548 → 19650). The only required arg
+# is the chromosome label.
 #
 # Usage:
-#   bash 04to08b_run_one_chrom.sh C_gar_LG28
+#   bash STEP_ZO_HtoM_run_one_chrom.sh C_gar_LG28
 #
 # Override paths via env vars (rarely needed):
 #   SCRATCH_ROOT, SCRIPT_DIR, SAMPLE_META
 #
 # Each chromosome takes ~5-10 min interactive (no SLURM array needed; this
 # script is meant to be called inside a single allocation or interactively).
+# Step L (build_sample_metadata) is genome-wide and must be run separately, ONCE.
 # =============================================================================
 
 set -euo pipefail
@@ -37,15 +39,15 @@ SAMPLE_META="${SAMPLE_META:-${SCRATCH_ROOT}/_shared/sample_metadata.tsv}"
 mkdir -p "${L1_DIR}" "${L1_PLOT_DIR}" "${L2_DIR}" "${L2_PLOT_DIR}" "${JSON_DIR}"
 
 echo "============================================================"
-echo "  Pipeline 04→05→06→07→08b   chromosome=${CHR}"
+echo "  Pipeline H→I→J→K→M   chromosome=${CHR}"
 echo "  precomp_dir : ${PRECOMP_DIR}"
 echo "  sample_meta : ${SAMPLE_META}"
 echo "============================================================"
 
-# ── Step 04: detect L1 (default --nn 80) ─────────────────────────────────────
+# ── Step H: detect L1 (default --nn 80) ──────────────────────────────────────
 echo ""
-echo "=== 04 detect_L1 (nn80) ==="
-"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_04_detect_L1.R" \
+echo "=== STEP_ZO_H detect_L1 (nn80) ==="
+"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_H_detect_L1.R" \
   --precomp_dir "${PRECOMP_DIR}" \
   --chr         "${CHR}" \
   --outdir      "${L1_DIR}" \
@@ -53,10 +55,10 @@ echo "=== 04 detect_L1 (nn80) ==="
   --boundary_validator_mode grow \
   --boundary_W 5 --boundary_offset 5 --boundary_min_dist 30
 
-# ── Step 05: plot L1 ─────────────────────────────────────────────────────────
+# ── Step I: plot L1 ──────────────────────────────────────────────────────────
 echo ""
-echo "=== 05 plot_L1 (nn80) ==="
-"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_05_plot_L1.R" \
+echo "=== STEP_ZO_I plot_L1 (nn80) ==="
+"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_I_plot_L1.R" \
   --precomp_dir     "${PRECOMP_DIR}" \
   --L1_dir          "${L1_DIR}" \
   --chr             "${CHR}" \
@@ -64,10 +66,10 @@ echo "=== 05 plot_L1 (nn80) ==="
   --toggle_L1       yes \
   --boundary_filter stable
 
-# ── Step 06: detect L2 (default --nn 40) ─────────────────────────────────────
+# ── Step J: detect L2 (default --nn 40) ──────────────────────────────────────
 echo ""
-echo "=== 06 detect_L2 (nn40) ==="
-"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_06_detect_L2.R" \
+echo "=== STEP_ZO_J detect_L2 (nn40) ==="
+"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_J_detect_L2.R" \
   --precomp_dir "${PRECOMP_DIR}" \
   --L1_dir      "${L1_DIR}" \
   --chr         "${CHR}" \
@@ -80,10 +82,10 @@ echo "=== 06 detect_L2 (nn40) ==="
   --quad_demote_on_fail yes \
   --quad_demote_drift_floor -1.0
 
-# ── Step 07: plot L2 ─────────────────────────────────────────────────────────
+# ── Step K: plot L2 ──────────────────────────────────────────────────────────
 echo ""
-echo "=== 07 plot_L2 (nn80 chrom + nn40 inside) ==="
-"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_07_plot_L2.R" \
+echo "=== STEP_ZO_K plot_L2 (nn80 chrom + nn40 inside) ==="
+"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_K_plot_L2.R" \
   --precomp_dir     "${PRECOMP_DIR}" \
   --L1_dir          "${L1_DIR}" \
   --L2_dir          "${L2_DIR}" \
@@ -91,16 +93,16 @@ echo "=== 07 plot_L2 (nn80 chrom + nn40 inside) ==="
   --outdir          "${L2_PLOT_DIR}" \
   --boundary_filter stable
 
-# ── Step 08b: export atlas JSON (assumes 08a has been run once already) ──────
+# ── Step M: export atlas JSON (assumes step L has been run once already) ─────
 echo ""
-echo "=== 08b export_atlas_json ==="
+echo "=== STEP_ZO_M export_atlas_json ==="
 if [[ ! -f "${SAMPLE_META}" ]]; then
   echo "[WARN] sample_metadata.tsv not found at ${SAMPLE_META}"
-  echo "[WARN] Run 08a_build_sample_metadata.R once to create it (genome-wide)."
+  echo "[WARN] Run STEP_ZO_L_build_sample_metadata.R once to create it (genome-wide)."
   echo "[WARN] Skipping JSON export for ${CHR}."
   exit 0
 fi
-"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_08b_export_atlas_json.R" \
+"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_M_export_atlas_json.R" \
   --precomp_dir     "${PRECOMP_DIR}" \
   --L1_dir          "${L1_DIR}" \
   --L2_dir          "${L2_DIR}" \

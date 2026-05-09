@@ -5,19 +5,19 @@
 #SBATCH --cpus-per-task=28
 #SBATCH --mem=237G
 #SBATCH -t 2:00:00
-#SBATCH -J inv_03_precomp
-#SBATCH -o logs/inv_03_precomp.%j.out
-#SBATCH -e logs/inv_03_precomp.%j.err
+#SBATCH -J inv_G_precomp
+#SBATCH -o logs/inv_G_precomp.%j.out
+#SBATCH -e logs/inv_G_precomp.%j.err
 
 # =============================================================================
-# 03_LAUNCH_precompute_localpca_zblocks.slurm  (v8.5 / consolidated layout v1.0)
+# STEP_ZO_G_LAUNCH_precompute.slurm  (v8.5 / consolidated layout v1.0)
 #
 # Per-chromosome precompute: builds <chr>.precomp.rds + the suite of NN-smoothed
 # similarity matrices (<chr>.sim_mat_nn{0,20,40,80,120,160,200,240,320}.rds).
 # Parallelised across chromosomes via mclapply.
 #
-# Submit AFTER 02b mds_merge completes:
-#   sbatch --dependency=afterok:<JOBID_02b> 03_LAUNCH_precompute_localpca_zblocks.slurm
+# Submit AFTER STEP_ZO_F mds_merge completes:
+#   sbatch --dependency=afterok:<JOBID_F> STEP_ZO_G_LAUNCH_precompute.slurm
 #
 # Output (path_localpca_zblocks/04_precomp/precomp/):
 #   <chr>.precomp.rds                                           (full, no slim)
@@ -49,7 +49,7 @@ mkdir -p "${OUTDIR}"
 
 cat <<EOF
 ================================================================
-  03 precompute_localpca_zblocks  (v10.0 SLIM)
+  STEP_ZO_G precompute_localpca_zblocks  (v10.0)
   MDS prefix    : ${MDS_PREFIX}
   Out dir       : ${OUTDIR}
   Dosage dir    : ${DOSAGE_DIR:-<not set>}
@@ -62,21 +62,21 @@ DOSAGE_ARG=()
 if [[ -n "${DOSAGE_DIR:-}" && -d "${DOSAGE_DIR}" ]]; then
   DOSAGE_ARG=(--dosage_dir "${DOSAGE_DIR}")
 else
-  echo "[03] WARNING: DOSAGE_DIR not set — dosage het CV columns will be NA"
+  echo "[STEP_ZO_G] WARNING: DOSAGE_DIR not set — dosage het CV columns will be NA"
 fi
 
-"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_03_precompute.R" \
+"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_G_precompute.R" \
   "${MDS_PREFIX}" \
   "${OUTDIR}" \
   "${DOSAGE_ARG[@]}"
 
 cat <<EOF
 
-  03 complete — $(date)
+  STEP_ZO_G complete — $(date)
   Precomp:  ${OUTDIR}/precomp/
   Sim mats: ${OUTDIR}/precomp/sim_mats/
 
-  Sanity check (full precomp, no slim — must include PC_1_*/PC_2_*):
+  Sanity check (full precomp — must include PC_1_*/PC_2_*):
     Rscript -e 'x <- readRDS("${OUTDIR}/precomp/C_gar_LG28.precomp.rds");
                 want <- c("max_abs_z","max_z_axis","inv_likeness",
                           "band_discreteness","adaptive_seed");
@@ -84,7 +84,8 @@ cat <<EOF
                 pc_cols <- length(grep("^PC_1_", names(x\$dt)));
                 cat("missing dims:", length(missing), "  PC_1_* cols:", pc_cols, "\n")'
 
-  Next: 04_detect_L1, 05_plot_L1, 06_detect_L2, 07_plot_L2 (interactive),
-        08a_build_sample_metadata + 08b_export_atlas_json
+  Next: STEP_ZO_H detect_L1, STEP_ZO_I plot_L1, STEP_ZO_J detect_L2,
+        STEP_ZO_K plot_L2 (interactive), STEP_ZO_L build_sample_metadata
+        + STEP_ZO_M export_atlas_json
 ================================================================
 EOF

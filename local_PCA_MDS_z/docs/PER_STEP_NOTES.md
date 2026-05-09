@@ -1,13 +1,19 @@
 # Per-step notes — what each script does, eats, and emits
 
-Reference for the consolidated `local_PCA_z/` pipeline (path 1).
+Reference for the consolidated `local_PCA_MDS_z/` pipeline (path 1).
+
+> Naming uses the May-2026 single-letter scheme (`STEP_ZO_B..M`). Older
+> references to `01a..08b`, numbered subfolders (`01_dosage_pca/`,
+> `02_mds/`, …), or `STEP_D17_*` / `STEP_A03_*_stage1` etc. are all
+> retired — those names will not match anything in the current tree.
 
 ---
 
-## Step 01a — `01_dosage_pca/01a_beagle_to_dosage.py`
+## Step B — `STEP_ZO_B_beagle_to_dosage.py`
 
 Per-chrom: reads beagle.gz genotype likelihoods → emits dosage matrix +
-sites file. Pre-existing, byte-identical to what was in the old layout.
+sites file. Pre-existing converter, byte-identical to what was in the old
+layout.
 
 **Output (in `<SCRATCH>/02_dosage_sites/`):**
 - `<chr>.dosage.tsv.gz` — site × sample dosage matrix
@@ -15,10 +21,10 @@ sites file. Pre-existing, byte-identical to what was in the old layout.
 
 ---
 
-## Step 01b — `01_dosage_pca/01b_local_pca_compute.R`
+## Step C — `STEP_ZO_C_local_pca_compute.R`
 
-(Was `STEP_A03_dense_registry_stage1.R`.) STAGE 1 (compute): one SLURM
-array task per chromosome runs sliding-window PCA on the dosage matrix.
+STAGE 1 (compute): one SLURM array task per chromosome runs sliding-window
+PCA on the dosage matrix.
 
 **Defaults:** `winsize=100`, `step=20`, `npc=4`, includes full eigenvalue
 spectrum (`scree_full`, `pve_full`) for downstream scree plots.
@@ -31,11 +37,11 @@ spectrum (`scree_full`, `pve_full`) for downstream scree plots.
 
 ---
 
-## Step 01c — `01_dosage_pca/01c_local_pca_merge.R`
+## Step D — `STEP_ZO_D_local_pca_merge.R`
 
-(Was `01d_local_pca_stage2.R`.) STAGE 2 (merge): single short job. Reads
-all per-chr `tmp/*.chr_meta.tsv.gz`, assigns globally unique sequential
-`window_id` values, patches each per-chr RDS with the real window_id.
+STAGE 2 (merge): single short job. Reads all per-chr
+`tmp/*.chr_meta.tsv.gz`, assigns globally unique sequential `window_id`
+values, patches each per-chr RDS with the real window_id.
 
 **Output (in `<SCRATCH>/path_localpca_zblocks/02_dense_registry/`):**
 - `windows_master.tsv.gz`       — THE master window registry
@@ -45,12 +51,12 @@ all per-chr `tmp/*.chr_meta.tsv.gz`, assigns globally unique sequential
 
 ---
 
-## Step 02a — `02_mds/02a_mds_compute.R`
+## Step E — `STEP_ZO_E_mds_compute.R`
 
-(Was `02a_mds_stage1.R`.) STAGE 1 (compute): one SLURM array task per
-**focal** chromosome. Loads ALL per-chr `.window_pca.rds` (yes, all 28 —
-needed for chunked background sampling), computes lostruct distance matrix
-on focal + background windows, runs `cmdscale`, extracts focal-only coords.
+STAGE 1 (compute): one SLURM array task per **focal** chromosome. Loads
+ALL per-chr `.window_pca.rds` (yes, all 28 — needed for chunked background
+sampling), computes lostruct distance matrix on focal + background windows,
+runs `cmdscale`, extracts focal-only coords.
 
 **Defaults:** `mds_mode=chunked_2x`, `npc=4`, `mds_dims=20`, `z_thresh=3.0`.
 
@@ -67,11 +73,11 @@ This is the heaviest step in the pipeline (~12h walltime per chromosome).
 
 ---
 
-## Step 02b — `02_mds/02b_mds_merge.R`
+## Step F — `STEP_ZO_F_mds_merge.R`
 
-(Was `02b_mds_stage2.R`.) STAGE 2 (merge): single short job. Stitches
-per-focal-chr MDS RDS files into the unified `inversion_localpca.mds.rds`
-with `$per_chr` structure (the format every downstream consumes).
+STAGE 2 (merge): single short job. Stitches per-focal-chr MDS RDS files
+into the unified `inversion_localpca.mds.rds` with `$per_chr` structure
+(the format every downstream consumes).
 
 Runs candidate-region detection (z>3 contiguous windows, gap-merging).
 
@@ -85,14 +91,13 @@ Runs candidate-region detection (z>3 contiguous windows, gap-merging).
 
 ---
 
-## Step 03 — `03_precomp/03_precompute_localpca_zblocks.R`
+## Step G — `STEP_ZO_G_precompute.R`
 
-(Was `STEP_C01a_precompute.R` slim v10.0.) Path-1 only. Per-chrom
-precompute, parallelized via `mclapply`.
+Path-1 only. Per-chrom precompute, parallelized via `mclapply`.
 
 **Inputs:**
-- `<step10_outprefix>.mds.rds` (output of step 02b)
-- `--dosage_dir <dir>` (optional; per-chrom dosage TSVs from step 01a;
+- `<step_F_outprefix>.mds.rds` (output of step F)
+- `--dosage_dir <dir>` (optional; per-chrom dosage TSVs from step B;
   enables `dosage_het_rate_cv` as the het component of `inv_likeness`)
 
 **Outputs (in `<SCRATCH>/path_localpca_zblocks/04_precomp/`):**
@@ -109,12 +114,12 @@ precompute, parallelized via `mclapply`.
   - adaptive: `beta_pval`, `adaptive_seed`, `beta_alpha`, `beta_beta`
   - seed eligibility: `seed_nn_dist`
   - morphology (z-profile, neighbourhood, sim_mat-block)
-  - **per-sample**: `PC_1_Ind*`, `PC_2_Ind*` (these are what 08b needs!)
+  - **per-sample**: `PC_1_Ind*`, `PC_2_Ind*` (these are what step M needs!)
 - `precomp/sim_mats/<chr>.sim_mat_nn{0,20,40,80,120,160,200,240,320}.rds`
 - `window_dt.tsv.gz` — genome-wide per-window scalar table
 - `precomp_summary.tsv` — per-chrom summary
 
-**Slim contract (must hold):**
+**Precomp contract (must hold):**
 - Present columns: `max_abs_z`, `max_z_axis`, `inv_likeness`,
   `band_discreteness`, `diffuse_score`, `het_intermediacy`,
   `n_effective_clusters`, `dosage_het_rate_cv`, `beta_pval`,
@@ -134,23 +139,23 @@ Rscript -e 'x <- readRDS("<SCRATCH>/path_localpca_zblocks/04_precomp/precomp/C_g
 Expected: `missing dims: 0  PC_1_* cols: 226`.
 
 **No more slim.** Earlier sessions used `precomp.slim.rds` (with `PC_*_*`
-columns dropped). It broke step 08b (PC2 jitter fallback). Slim is dead.
+columns dropped). It broke step M (PC2 jitter fallback). Slim is dead.
 
 ---
 
-## Step 04 — `04_detect_L1/04_detect_L1_localpca_zblocks.R`
+## Step H — `STEP_ZO_H_detect_L1.R`
 
-(Was `STEP_D17_multipass_L1_only_v7.R`.) Boundary-driven L1 envelope
-discovery, one chromosome at a time. The boundary scan slides a small WxW
-upper-triangle cross-block at offset G along the diagonal of the sim_mat;
-each peak is validated by the **growing-W cross-block z** validator.
+Boundary-driven L1 envelope discovery, one chromosome at a time. The
+boundary scan slides a small WxW upper-triangle cross-block at offset G
+along the diagonal of the sim_mat; each peak is validated by the
+**growing-W cross-block z** validator.
 
 **Default NN scale: 80.**
 
 **Canonical run (defaults from history line 19553):**
 
 ```bash
-Rscript 04_detect_L1/04_detect_L1_localpca_zblocks.R \
+Rscript STEP_ZO_H_detect_L1.R \
   --precomp_dir <precomp>/precomp \
   --chr         <chr> \
   --outdir      <outdir> \
@@ -170,7 +175,7 @@ Rscript 04_detect_L1/04_detect_L1_localpca_zblocks.R \
   - `WEAK_BLUE`, `DECAYS`, `MARGINAL`, `EDGE`
 - `<chr>.L1_score_curve.tsv`   — per-window boundary score curve
 
-**Filter `--boundary_filter stable` in steps 05/07 shows only `STABLE_BLUE`.**
+**Filter `--boundary_filter stable` in steps I/K shows only `STABLE_BLUE`.**
 
 **Settled parameters (from earlier sessions):**
 - `--boundary_min_dist 30` — sweep through 10/20/30 (history 19488→19510)
@@ -179,9 +184,9 @@ Rscript 04_detect_L1/04_detect_L1_localpca_zblocks.R \
 
 ---
 
-## Step 05 — `05_plot_L1/05_plot_L1_localpca_zblocks.R`
+## Step I — `STEP_ZO_I_plot_L1.R`
 
-(Was `STEP_D17c_overlay_plot_L1_only_v7.R`.) Multi-page L1 PDF.
+Multi-page L1 PDF.
 - Page 1: whole-chromosome heatmap (lower triangle = sim, upper = z) with
   L1 envelopes outlined and STABLE_BLUE boundaries marked with red squares
 - Pages 2..(N+1): one zoomed page per L1 segment, with **local Z** computed
@@ -192,7 +197,7 @@ Rscript 04_detect_L1/04_detect_L1_localpca_zblocks.R \
 **Canonical run:**
 
 ```bash
-Rscript 05_plot_L1/05_plot_L1_localpca_zblocks.R \
+Rscript STEP_ZO_I_plot_L1.R \
   --precomp_dir <precomp>/precomp \
   --L1_dir      <l1_outdir> \
   --chr         <chr> \
@@ -209,11 +214,10 @@ Rscript 05_plot_L1/05_plot_L1_localpca_zblocks.R \
 
 ---
 
-## Step 06 — `06_detect_L2/06_detect_L2_localpca_zblocks.R`
+## Step J — `STEP_ZO_J_detect_L2.R`
 
-(Was `STEP_D17_multipass_L2_v8.R`.) Reads L1 envelopes, runs the same
-boundary scan INDEPENDENTLY INSIDE EACH L1 SEGMENT, producing a finer L2
-partition.
+Reads L1 envelopes, runs the same boundary scan INDEPENDENTLY INSIDE EACH
+L1 SEGMENT, producing a finer L2 partition.
 
 **Default NN scale: 40** (finer than L1's 80 because we're zooming inside
 a segment — smoother sim_mats wash out sub-structure here).
@@ -233,7 +237,7 @@ a segment — smoother sim_mats wash out sub-structure here).
 **Canonical run (history line 19585):**
 
 ```bash
-Rscript 06_detect_L2/06_detect_L2_localpca_zblocks.R \
+Rscript STEP_ZO_J_detect_L2.R \
   --precomp_dir <precomp>/precomp \
   --L1_dir      <l1_outdir> \
   --chr         <chr> \
@@ -255,11 +259,10 @@ Rscript 06_detect_L2/06_detect_L2_localpca_zblocks.R \
 
 ---
 
-## Step 07 — `07_plot_L2/07_plot_L2_localpca_zblocks.R`
+## Step K — `STEP_ZO_K_plot_L2.R`
 
-(Was `STEP_D17c_overlay_plot_L2_v8.R`.) Multi-page PDF for the L1+L2
-hierarchy.
-- Page 1: same as step 05 page 1 (chromosome-wide nn80 with L1 boundaries)
+Multi-page PDF for the L1+L2 hierarchy.
+- Page 1: same as step I page 1 (chromosome-wide nn80 with L1 boundaries)
 - Pages 2..(N+1): per L1 segment, using **nn40** (`--sim_mat_l2`), with
   L2 boundaries inside that segment overlaid as red squares
 
@@ -268,7 +271,7 @@ hierarchy.
 **Canonical run:**
 
 ```bash
-Rscript 07_plot_L2/07_plot_L2_localpca_zblocks.R \
+Rscript STEP_ZO_K_plot_L2.R \
   --precomp_dir <precomp>/precomp \
   --L1_dir      <l1_outdir> \
   --L2_dir      <l2_outdir> \
@@ -281,10 +284,10 @@ Rscript 07_plot_L2/07_plot_L2_localpca_zblocks.R \
 
 ---
 
-## Step 08a — `08_atlas_json/08a_build_sample_metadata.R`
+## Step L — `STEP_ZO_L_build_sample_metadata.R`
 
-**NEW SCRIPT** (didn't exist in old layout). Reconciles the three
-identity layers into ONE merged TSV, ONCE, genome-wide.
+Reconciles the three identity layers into ONE merged TSV, ONCE,
+genome-wide.
 
 **Three layers:**
 1. **bamlist** — one CGA per line, in PC_1_Ind* order → maps `Ind0..IndN → CGAxxx`
@@ -295,7 +298,7 @@ identity layers into ONE merged TSV, ONCE, genome-wide.
 **Canonical run:**
 
 ```bash
-Rscript 08_atlas_json/08a_build_sample_metadata.R \
+Rscript STEP_ZO_L_build_sample_metadata.R \
   --bamlist     <path>/list_of_samples.tsv \
   --pairs       <path>/catfish_226_for_natora.txt \
   --theta_cutoff 0.177 \
@@ -317,9 +320,9 @@ all three discovery paths use the same 226-sample cohort.
 
 ---
 
-## Step 08b — `08_atlas_json/08b_export_atlas_json_localpca_zblocks.R`
+## Step M — `STEP_ZO_M_export_atlas_json.R`
 
-(Was `export_precomp_to_json_v3.R`.) The FINAL JSON. Embeds:
+The FINAL JSON. Embeds:
 - multi-scale sim_mat thumbnails (`nn40`, `nn80`, `nn160`, `nn320`)
 - per-distance local Z scores (matching the overlay PDF colorimetry)
 - L1 envelopes + L1 boundaries
@@ -329,7 +332,7 @@ all three discovery paths use the same 226-sample cohort.
 **Canonical run (with `--sample_metadata`):**
 
 ```bash
-Rscript 08_atlas_json/08b_export_atlas_json_localpca_zblocks.R \
+Rscript STEP_ZO_M_export_atlas_json.R \
   --precomp_dir     <SCRATCH>/path_localpca_zblocks/04_precomp/precomp \
   --L1_dir          <SCRATCH>/path_localpca_zblocks/05_L1 \
   --L2_dir          <SCRATCH>/path_localpca_zblocks/07_L2 \
@@ -348,23 +351,23 @@ viewer / pca_scrubber.
 
 ## Glossary of file extensions
 
-| Extension                                 | What it is                                         |
-|-------------------------------------------|----------------------------------------------------|
-| `<chr>.beagle.gz`                         | ANGSD GL output (input)                            |
-| `<chr>.dosage.tsv.gz`                     | Step 01a output                                    |
-| `<chr>.sites.tsv.gz`                      | Step 01a output                                    |
-| `<chr>.window_pca.rds`                    | Step 01c output (top-npc eigvecs + full scree)     |
-| `inversion_localpca.mds.rds`              | Step 02b output (`$per_chr` structure)             |
-| `<chr>.precomp.rds`                       | Step 03 output (full, with PC_1_*/PC_2_* columns)  |
-| `<chr>.sim_mat_nn{0..320}.rds`            | Step 03 output                                     |
-| `<chr>.L1_envelopes.tsv`                  | Step 04 output                                     |
-| `<chr>.L1_boundaries.tsv`                 | Step 04 output                                     |
-| `<chr>.L1_score_curve.tsv`                | Step 04 output                                     |
-| `<chr>.L1_overlay.pdf`                    | Step 05 output                                     |
-| `<chr>.L2_envelopes.tsv`                  | Step 06 output                                     |
-| `<chr>.L2_boundaries.tsv`                 | Step 06 output                                     |
-| `<chr>.L2_segment_stats.tsv`              | Step 06 output                                     |
-| `<chr>.L2_quadrant_validator.tsv`         | Step 06 output (when --quadrant_validator yes)     |
-| `<chr>.L2_overlay.pdf`                    | Step 07 output                                     |
-| `sample_metadata.tsv`                     | Step 08a output (genome-wide one-off, in _shared/) |
-| `<chr>.atlas.json`                        | Step 08b output (atlas/scrubber JSON)              |
+| Extension                                 | What it is                                       |
+|-------------------------------------------|--------------------------------------------------|
+| `<chr>.beagle.gz`                         | ANGSD GL output (input)                          |
+| `<chr>.dosage.tsv.gz`                     | Step B output                                    |
+| `<chr>.sites.tsv.gz`                      | Step B output                                    |
+| `<chr>.window_pca.rds`                    | Step D output (top-npc eigvecs + full scree)     |
+| `inversion_localpca.mds.rds`              | Step F output (`$per_chr` structure)             |
+| `<chr>.precomp.rds`                       | Step G output (full, with PC_1_*/PC_2_* columns) |
+| `<chr>.sim_mat_nn{0..320}.rds`            | Step G output                                    |
+| `<chr>.L1_envelopes.tsv`                  | Step H output                                    |
+| `<chr>.L1_boundaries.tsv`                 | Step H output                                    |
+| `<chr>.L1_score_curve.tsv`                | Step H output                                    |
+| `<chr>.L1_overlay.pdf`                    | Step I output                                    |
+| `<chr>.L2_envelopes.tsv`                  | Step J output                                    |
+| `<chr>.L2_boundaries.tsv`                 | Step J output                                    |
+| `<chr>.L2_segment_stats.tsv`              | Step J output                                    |
+| `<chr>.L2_quadrant_validator.tsv`         | Step J output (when --quadrant_validator yes)    |
+| `<chr>.L2_overlay.pdf`                    | Step K output                                    |
+| `sample_metadata.tsv`                     | Step L output (genome-wide one-off, in _shared/) |
+| `<chr>.atlas.json`                        | Step M output (atlas/scrubber JSON)              |

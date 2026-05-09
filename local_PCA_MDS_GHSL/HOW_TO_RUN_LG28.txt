@@ -5,9 +5,15 @@ cd /mnt/c/Users/quent/Desktop/catfish-inversion-analysis/local_PCA_MDS_GHSL
 # is sourced; on the cluster the LAUNCH_STEP_GH_*.slurm files do this for you)
 CHR=C_gar_LG28
 
-# Five stages, A → B → C → D → E. The A and B stages each have their own
-# launcher. Stages C / D / E run together via LAUNCH_STEP_GH_CDE_enrichment.slurm.
-# Below are the bare-Rscript invocations for an interactive single-chrom run.
+# prep → A → B → C → D → E. The prep step is one-time per cohort. The A and
+# B stages each have their own SLURM launcher; C / D / E run together via
+# LAUNCH_STEP_GH_CDE_enrichment.slurm. Below are bare-shell/Rscript invocations
+# for an interactive single-chrom run.
+
+# prep — merge per-sample Clair3 postprocess TSV → per-chrom merged TSV
+# (skip if ${GHSL_PREP_DIR}/${CHR}.merged_phased_snps.tsv.gz already exists)
+bash STEP_GH_prep_merged_phased_snps.sh \
+    "$POSTPROCESS_DIR" "$GHSL_PREP_DIR" $CHR
 
 # A — divergence matrices (heavy, ~1 hr; skip if already produced for this chrom)
 $RSCRIPT_BIN STEP_GH_A_compute_matrices.R \
@@ -72,6 +78,8 @@ ls -la $GHSL_DIR/d17/${CHR}_*
 ls -la $GHSL_DIR/json_out/${CHR}/
 
 # For the full 28-chrom genome run on the cluster, use the SLURM launchers:
+#   sbatch --array=1-28 STEP_GH_prep_merged_phased_snps.sh \
+#       "$POSTPROCESS_DIR" "$GHSL_PREP_DIR"                      # one-time per cohort
 #   sbatch LAUNCH_STEP_GH_A_compute.slurm                        # array 1–28
 #   sbatch LAUNCH_STEP_GH_B_classify.slurm                       # all chroms
 #   sbatch LAUNCH_STEP_GH_CDE_enrichment.slurm                   # array 1–28 (C+D+E per chrom)

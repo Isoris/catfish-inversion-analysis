@@ -18,7 +18,11 @@ one level up.
 ## 1. Pipeline at a glance
 
 ```
-ghsl_prep/<chr>.merged_phased_snps.tsv.gz       (input — phased Clair3 SNPs)
+postprocess_results/<chr>/<sample>/all_variants_with_phase.tsv
+   │ (per-sample, per-chrom Clair3 postprocess output)
+   ▼
+merged phased SNPs               (STEP_GH_prep — bash, ~few min/chrom)
+ghsl_prep/<chr>.merged_phased_snps.tsv.gz
    │
    ▼
 divergence matrices              (STEP_GH_A — heavy, ~1 hr/chrom × 28 array)
@@ -42,11 +46,14 @@ page-3 atlas JSON                (STEP_GH_E — packs all of the above into
                                   one <chr>_phase2_ghsl.json)
 ```
 
-Five stages, lettered A–E. Each has either its own SLURM launcher
-(`LAUNCH_STEP_GH_A_compute.slurm`,
+Five stages, lettered A–E, plus a pre-stage (`STEP_GH_prep_*`) that
+merges the per-sample Clair3 postprocess output into per-chromosome
+input for STEP_GH_A. Each lettered stage has either its own SLURM
+launcher (`LAUNCH_STEP_GH_A_compute.slurm`,
 `LAUNCH_STEP_GH_B_classify.slurm`) or is bundled together for a single
 per-chrom run via `LAUNCH_STEP_GH_CDE_enrichment.slurm` (which does C
-→ D → E in one job). A → B → CDE is the canonical run order.
+→ D → E in one job). prep → A → B → CDE is the canonical run order;
+the prep step is one-time per cohort.
 
 ## 2. Why GHSL has an extra stage compared to z and θπ
 
@@ -65,7 +72,28 @@ because phased-haplotype divergence is biologically interpretable
 (low div in inversion homozygotes, high div in heterozygotes) and the
 classifier exploits that directly.
 
-## 3. The five stages
+## 3. The stages
+
+### `STEP_GH_prep_merged_phased_snps.sh` — pre-stage (one-time per cohort)
+
+Merges per-sample Clair3 postprocess TSVs
+(`postprocess_results/<chr>/<sample>/all_variants_with_phase.tsv`) into
+one per-chromosome file
+(`ghsl_prep/<chr>.merged_phased_snps.tsv.gz`) consumed by STEP_GH_A.
+Filters to `IS_SIMPLE_BIALLELIC=TRUE && IS_SNP=TRUE`; keeps phase
+information (`is_phased`, `phase_gt`, `ps`, `phase_block_id`,
+`phase_tier`) plus QC fields (`qual`, `gq`, `dp`).
+
+```bash
+# Single chromosome
+bash STEP_GH_prep_merged_phased_snps.sh <postprocess_dir> <ghsl_prep_outdir> C_gar_LG28
+
+# All 28 in parallel as a SLURM array
+sbatch --array=1-28 STEP_GH_prep_merged_phased_snps.sh <postprocess_dir> <ghsl_prep_outdir>
+```
+
+Run once when new Clair3 data arrives; STEP_GH_A onward reads from the
+merged `ghsl_prep/` outputs.
 
 ### `STEP_GH_A_compute_matrices.R` — heavy engine (~1 hr/chrom, run once)
 
@@ -132,7 +160,7 @@ Per-chromosome RDS shards (consumed by STEP_GH_C / STEP_GH_E):
 ### `STEP_GH_C_precompute.R` — local PCA + sim_mat (~5–10 min/chrom)
 
 Same role as θπ's `STEP_TR_B_v5_precompute.R` and dosage's
-`STEP_ZO_03_precompute.R`: builds the precomp + sim_mat that the L1/L2
+`STEP_ZO_G_precompute.R`: builds the precomp + sim_mat that the L1/L2
 boundary detector consumes.
 
 Reads `<chr>.ghsl_matrices.rds` and produces
@@ -191,9 +219,13 @@ Consolidates 4 source RDSes + 4 D17 TSVs into one
 
 ## 4. Run order
 
-Three SLURM launchers, in this order:
+Pre-stage (one-time per cohort), then three SLURM launchers, in this order:
 
 ```bash
+# Pre-stage: merge per-sample Clair3 postprocess output → per-chrom TSV
+sbatch --array=1-28 STEP_GH_prep_merged_phased_snps.sh \
+       <postprocess_dir> ${GHSL_PREP_DIR}
+
 # Stage A: heavy compute, ~1 hr/chrom × 28 in parallel (~1 hr wall)
 sbatch LAUNCH_STEP_GH_A_compute.slurm
 

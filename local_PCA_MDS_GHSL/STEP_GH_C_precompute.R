@@ -5,7 +5,7 @@
 # GHSL stage C — precompute (local PCA + sim_mat + secondary |Z| envelopes).
 # Companion to STEP_GH_A (heavy divergence engine) and STEP_GH_B (classifier).
 #
-# This stage is the analogue of theta_pi's TR_B and dosage's STEP_ZO_03 — it
+# This stage is the analogue of theta_pi's TR_B and dosage's STEP_ZO_G — it
 # builds the precomp/sim_mat that the L1/L2 boundary detector consumes.
 #
 # Purpose

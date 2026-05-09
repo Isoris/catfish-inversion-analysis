@@ -4,21 +4,21 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=64GB
 #SBATCH -t 1-00:00:00
-#SBATCH -J inv_step08
-#SBATCH -o logs/inv_step08.%A_%a.out
-#SBATCH -e logs/inv_step08.%A_%a.err
+#SBATCH -J inv_B_beagle
+#SBATCH -o logs/inv_B_beagle.%A_%a.out
+#SBATCH -e logs/inv_B_beagle.%A_%a.err
 
 set -euo pipefail
 
 # =============================================================================
-# STEP08_beagle_to_dosage_by_chr.slurm  (v8.5)
+# STEP_ZO_B_LAUNCH_beagle_to_dosage.slurm  (v8.5)
 #
 # Convert one per-chromosome BEAGLE file to:
 #   <chrom>.sites.tsv.gz
 #   <chrom>.dosage.tsv.gz
 #
 # Usage:
-#   sbatch --array=0-27%8 LAUNCH_STEP08_beagle_to_dosage_by_chr.slurm beagle_chr.list
+#   sbatch --array=0-27%8 STEP_ZO_B_LAUNCH_beagle_to_dosage.slurm beagle_chr.list
 # =============================================================================
 
 source ~/.bashrc

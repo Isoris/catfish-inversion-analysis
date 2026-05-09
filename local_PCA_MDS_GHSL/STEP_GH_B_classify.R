@@ -965,7 +965,7 @@ f_summ <- file.path(outdir, "ghsl_summary.tsv")
 fwrite(summ_dt, f_summ, sep = "\t")
 
 message("\n================================================================")
-message("[DONE] Snake 3 v6b: Light Classifier")
+message("[DONE] GHSL stage B: Light Classifier")
 message("================================================================")
 message("  Track:      ", f_track)
 message("  Karyotype:  ", f_karyo)

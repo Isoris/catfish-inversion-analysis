@@ -4,19 +4,19 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH -t 1:00:00
-#SBATCH -J inv_01c_merge
-#SBATCH -o logs/inv_01c_merge.%j.out
-#SBATCH -e logs/inv_01c_merge.%j.err
+#SBATCH -J inv_D_merge
+#SBATCH -o logs/inv_D_merge.%j.out
+#SBATCH -e logs/inv_D_merge.%j.err
 
 # =============================================================================
-# 01c_LAUNCH_local_pca_merge.slurm  (v8.5 / consolidated layout v1.0)
+# STEP_ZO_D_LAUNCH_local_pca_merge.slurm  (v8.5 / consolidated layout v1.0)
 #
 # STAGE 2 (merge): single short job. Reads the 28 per-chr RDS in tmp/, assigns
 # globally unique window_ids, writes finalized per-chr <chr>.window_pca.rds +
 # windows_master.tsv.gz (the master registry).
 #
-# Submit AFTER 01b stage1 array job completes:
-#   sbatch --dependency=afterok:<JOBID_01b> 01c_LAUNCH_local_pca_merge.slurm
+# Submit AFTER STEP_ZO_C stage1 array job completes:
+#   sbatch --dependency=afterok:<JOBID_C> STEP_ZO_D_LAUNCH_local_pca_merge.slurm
 #
 # Output (path_localpca_zblocks/02_dense_registry/):
 #   windows_master.tsv.gz, windows_master_summary.tsv,
@@ -35,7 +35,7 @@ mkdir -p logs
 SCRIPT_DIR="${SCRIPT_DIR:-${BASE}/inversion-popgen-toolkit/local_PCA_z}"
 SCRATCH_ROOT="${SCRATCH_ROOT:-${BASE}/inversion_localpca_v8}"
 
-# 01b wrote tmp/ inside 01_local_pca/. The merge READS from there and WRITES
+# STEP_ZO_C wrote tmp/ inside 01_local_pca/. The merge READS from there and WRITES
 # the final registry to 02_dense_registry/.
 INDIR="${INDIR:-${SCRATCH_ROOT}/path_localpca_zblocks/01_local_pca}"
 OUTDIR="${OUTDIR:-${SCRATCH_ROOT}/path_localpca_zblocks/02_dense_registry}"
@@ -49,13 +49,13 @@ fi
 
 cat <<EOF
 ================================================================
-  01c local_pca_merge
+  STEP_ZO_D local_pca_merge
   Reading tmp from : ${INDIR}/tmp
   Writing to       : ${OUTDIR}
 ================================================================
 EOF
 
-"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_01c_local_pca_merge.R" \
+"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_D_local_pca_merge.R" \
   --outdir "${OUTDIR}"
 
-echo "[DONE] 01c — $(date)"
+echo "[DONE] STEP_ZO_D — $(date)"

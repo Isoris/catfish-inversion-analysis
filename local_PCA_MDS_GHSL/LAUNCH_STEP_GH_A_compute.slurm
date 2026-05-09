@@ -19,7 +19,7 @@
 # at raw window resolution, applies rolling means at configurable scales,
 # saves matrices as RDS for the light classifier (STEP_GH_B) to iterate on.
 #
-# Upstream:    prepare_ghsl_v3_merged.sh (ghsl_prep/<chr>.merged_phased_snps.tsv.gz)
+# Upstream:    STEP_GH_prep_merged_phased_snps.sh (ghsl_prep/<chr>.merged_phased_snps.tsv.gz)
 #              dosage precomp (precomp/<chr>.precomp.rds for window coords)
 # Downstream:  STEP_GH_B_classify (light classifier, ~30 s / chrom)
 #
@@ -66,7 +66,7 @@ mkdir -p "${OUTDIR_RUN}"
 }
 [[ -d "${GHSL_PREP_DIR}" ]] || {
   echo "[GH_A] ERROR: ghsl prep dir missing — ${GHSL_PREP_DIR}" >&2
-  echo "[GH_A]        Run utils/prepare_ghsl_v3_merged.sh first." >&2
+  echo "[GH_A]        Run STEP_GH_prep_merged_phased_snps.sh first." >&2
   exit 2;
 }
 

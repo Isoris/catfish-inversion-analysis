@@ -4,12 +4,12 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=64G
 #SBATCH -t 12:00:00
-#SBATCH -J inv_02a_compute
-#SBATCH -o logs/inv_02a_compute.%A_%a.out
-#SBATCH -e logs/inv_02a_compute.%A_%a.err
+#SBATCH -J inv_E_compute
+#SBATCH -o logs/inv_E_compute.%A_%a.out
+#SBATCH -e logs/inv_E_compute.%A_%a.err
 
 # =============================================================================
-# 02a_LAUNCH_mds_compute.slurm  (v8.5 / consolidated layout v1.0)
+# STEP_ZO_E_LAUNCH_mds_compute.slurm  (v8.5 / consolidated layout v1.0)
 #
 # STAGE 1 (compute): one SLURM array task per FOCAL chromosome. Reads ALL
 # per-chr window_pca.rds (needed for chunked background sampling), computes
@@ -17,7 +17,7 @@
 # tmp/. Heaviest step in the pipeline (~12h walltime per chromosome).
 #
 # Submit:
-#   sbatch --array=0-27 02a_LAUNCH_mds_compute.slurm chrom.list
+#   sbatch --array=0-27 STEP_ZO_E_LAUNCH_mds_compute.slurm chrom.list
 #
 # Output (path_localpca_zblocks/03_mds/tmp/):
 #   <focal_chr>.mds_perchr.rds  — per-focal-chr MDS coords
@@ -55,7 +55,7 @@ FOCAL_CHR="$(sed -n "${LINE}p" "${CHROM_LIST}")"
 
 cat <<EOF
 ================================================================
-  02a mds_compute  —  focal=${FOCAL_CHR}
+  STEP_ZO_E mds_compute  —  focal=${FOCAL_CHR}
   Array task : ${SLURM_ARRAY_TASK_ID}/${SLURM_ARRAY_TASK_MAX:-?}
   RDS dir    : ${RDS_DIR}
   Out dir    : ${OUTDIR}
@@ -63,7 +63,7 @@ cat <<EOF
 ================================================================
 EOF
 
-"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_02a_mds_compute.R" \
+"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_ZO_E_mds_compute.R" \
   --rds_dir   "${RDS_DIR}" \
   --outdir    "${OUTDIR}" \
   --outprefix "${OUTPREFIX}" \
@@ -73,4 +73,4 @@ EOF
   --mds_dims  "${MDS_DIMS}" \
   --z_thresh  "${Z_THRESH}"
 
-echo "[DONE] 02a — focal=${FOCAL_CHR} — $(date)"
+echo "[DONE] STEP_ZO_E — focal=${FOCAL_CHR} — $(date)"
