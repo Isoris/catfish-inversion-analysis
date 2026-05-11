@@ -57,7 +57,12 @@ hr "2. Required files present"
 for f in 00_theta_config.sh \
          00_sanity_check_pestPG_scaling.sh \
          STEP_TR_A_compute_theta_matrices.R \
-         STEP_TR_B_classify_theta.R \
+         STEP_TR_B_local_pca_compute.R \
+         STEP_TR_C_mds_compute.R \
+         STEP_TR_D_detect_L1.R \
+         STEP_TR_F_detect_L2.R \
+         STEP_TR_J_atlas_json.R \
+         lib_persample_cusum.R \
          LAUNCH_TR_theta_pi.slurm \
          chrom.list; do
   if [[ -f "$f" ]]; then
@@ -134,16 +139,15 @@ else
   exit 1
 fi
 
-# ── 6. TR_B has the turn-114 schema-v2 patch ──────────────────────────────
-hr "6. STEP_TR_B has the turn-114 atlas-canonical-names patch"
-if grep -q "schema_version = 2L\|sample_ids" STEP_TR_B_classify_theta.R; then
-  hits=$(grep -c "schema_version = 2L\|sample_ids\|values_flat\|^.*values  *=.*clean_numeric" STEP_TR_B_classify_theta.R)
-  ok "found $hits markers of the turn-114 patch in STEP_TR_B"
+# ── 6. TR_J emits the turn-114 atlas-canonical schema ─────────────────────
+hr "6. STEP_TR_J has the atlas-canonical schema (sample_ids + flat values)"
+if grep -q "schema_version = 2L\|sample_ids" STEP_TR_J_atlas_json.R; then
+  hits=$(grep -c "schema_version = 2L\|sample_ids\|values_flat\|^.*values  *=.*clean_numeric" STEP_TR_J_atlas_json.R)
+  ok "found $hits markers of the schema-v2 patch in STEP_TR_J"
 else
-  warn "STEP_TR_B is the pre-turn-114 version — atlas-canonical names NOT emitted"
+  warn "STEP_TR_J does not appear to emit schema_version 2 + sample_ids"
   warn "  → JSON will have legacy field shape (.samples-as-objects, .z_profile only)."
   warn "  → Atlas detector handles this via dual-shape tolerance, but cleaner is better."
-  warn "  → Drop in the patched STEP_TR_B from this bundle for new runs."
 fi
 
 # ── 7. pestPG sanity check (confirms the bug is real in real data) ────────
@@ -181,15 +185,18 @@ if [[ $WARN -gt 0 ]]; then
   echo ""
   echo "STATUS: ready with warnings."
   echo ""
-  echo "Next steps:"
-  echo "  # dry-run on LG28 (interactive, ~15 min):"
+  echo "Next steps — see HOW_TO_RUN_LG28.txt for the full A→J chain."
+  echo "  # quick dry-run on LG28 (interactive, ~hour at coarse scale):"
+  echo "  export PESTPG_SCALE=win50000.step10000"
   echo "  RSCRIPT=\$(which Rscript)"
   echo "  \$RSCRIPT STEP_TR_A_compute_theta_matrices.R --chrom C_gar_LG28"
-  echo "  \$RSCRIPT STEP_TR_B_classify_theta.R         --chrom C_gar_LG28"
+  echo "  \$RSCRIPT STEP_TR_B_local_pca_compute.R       --chrom C_gar_LG28"
+  echo "  \$RSCRIPT STEP_TR_C_mds_compute.R             --chrom C_gar_LG28 --mode full"
+  echo "  # then D–J per HOW_TO_RUN_LG28.txt"
   echo "  jq '.schema_version, ._layers_present, .n_windows' \\"
   echo "     \${JSON_OUT_DIR}/C_gar_LG28/C_gar_LG28_phase2_theta.json"
   echo ""
-  echo "  # if LG28 looks right, full 28-chrom array:"
+  echo "  # if LG28 looks right, full 28-chrom array (chains A→J per task):"
   echo "  sbatch --array=1-28 LAUNCH_TR_theta_pi.slurm chrom.list"
   exit 0
 fi
@@ -197,13 +204,16 @@ fi
 echo ""
 echo "STATUS: READY ✓"
 echo ""
-echo "Next steps:"
-echo "  # dry-run on LG28 (interactive, ~15 min):"
+echo "Next steps — see HOW_TO_RUN_LG28.txt for the full A→J chain."
+echo "  # quick dry-run on LG28 (interactive, ~hour at coarse scale):"
+echo "  export PESTPG_SCALE=win50000.step10000"
 echo "  RSCRIPT=\$(which Rscript)"
 echo "  \$RSCRIPT STEP_TR_A_compute_theta_matrices.R --chrom C_gar_LG28"
-echo "  \$RSCRIPT STEP_TR_B_classify_theta.R         --chrom C_gar_LG28"
+echo "  \$RSCRIPT STEP_TR_B_local_pca_compute.R       --chrom C_gar_LG28"
+echo "  \$RSCRIPT STEP_TR_C_mds_compute.R             --chrom C_gar_LG28 --mode full"
+echo "  # then D–J per HOW_TO_RUN_LG28.txt"
 echo "  jq '.schema_version, ._layers_present, .n_windows' \\"
 echo "     \${JSON_OUT_DIR}/C_gar_LG28/C_gar_LG28_phase2_theta.json"
 echo ""
-echo "  # if LG28 looks right, full 28-chrom array:"
+echo "  # if LG28 looks right, full 28-chrom array (chains A→J per task):"
 echo "  sbatch --array=1-28 LAUNCH_TR_theta_pi.slurm chrom.list"

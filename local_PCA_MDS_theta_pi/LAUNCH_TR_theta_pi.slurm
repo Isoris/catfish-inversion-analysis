@@ -9,18 +9,36 @@
 #SBATCH -e logs/theta_pi.%A_%a.err
 
 # =============================================================================
-# LAUNCH_TR_theta_pi.slurm  (v8.5)
+# LAUNCH_TR_theta_pi.slurm  (dual-scale, A→J)
 #
-# One focal chromosome per array task. Mirrors LAUNCH_B01_mds_stage1.slurm
-# conventions:
-#   - reads chrom.list path from argv[1]
-#   - sources the central inversion config (RSCRIPT_BIN, inv_init_dirs)
-#   - sources 2f_theta_discovery's stream config (PESTPG_DIR, JSON_OUT_DIR…)
-#   - SLURM_ARRAY_TASK_ID maps to chrom.list line N+1 (line 1 = header)
-#   - calls STEP_TR_A then STEP_TR_B with --chrom <CHROM>
+# One whole chromosome per array task. Runs BOTH scales of the theta-pi
+# pipeline in sequence per chromosome:
+#
+#   COARSE pass  (win50000.step10000, ~5k windows on LG28)
+#     A  theta_native at coarse scale
+#     B  local PCA per window
+#     C  MDS + features + sim_mats   (--mode full → precomp/)
+#     D–G  L1/L2 detect + plots (boundary discovery)
+#
+#   DENSE pass   (win10000.step2000, ~16.5k windows on LG28)
+#     A  theta_native at dense scale
+#     B  local PCA per window
+#     C  MDS + features banded only  (--mode local --out_subdir precomp_dense)
+#
+#   MERGE pass   (consumes coarse L1/L2 + dense per-window data)
+#     H  classify_carriers   (k-means on dense per-sample PC1 inside coarse L2)
+#     I  cusum_per_carrier   (dense per-sample CUSUM inside coarse L2)
+#     J  atlas_json          (merged page-12 JSON: coarse sim_mat + dense theta tracks)
+#
+# All steps operate at whole-chromosome granularity. The "candidate" concept
+# at the merge layer = the auto-detected L2 envelope from the coarse scan.
 #
 # θπ has no cross-chromosomal step (each chrom is fully independent), so
 # there is no "stage 2" merge. The atlas loads one JSON per chromosome.
+#
+# Mirrors LAUNCH_B01_mds_stage1.slurm conventions: reads chrom.list path
+# from argv[1], sources central inversion config + theta stream config,
+# SLURM_ARRAY_TASK_ID maps to chrom.list line N+1 (line 1 = header).
 #
 # Submit:
 #   sbatch --array=1-28 LAUNCH_TR_theta_pi.slurm chrom.list
@@ -93,6 +111,11 @@ if [[ -z "${CHROM}" ]]; then
   exit 1
 fi
 
+# ---- Scale definitions -----------------------------------------------------
+# Two scales used in this dual-scale launcher. Override via env if needed.
+export COARSE_PESTPG_SCALE="${COARSE_PESTPG_SCALE:-win50000.step10000}"
+export DENSE_PESTPG_SCALE="${DENSE_PESTPG_SCALE:-win10000.step2000}"
+
 # ---- Where do the R scripts live? ------------------------------------------
 # Mirror B01: scripts in <stream-dir>/steps/ if that exists, else in <stream-dir>/.
 # Use SCRIPT_DIR (computed above from BASH_SOURCE) — robust to repo layout and
@@ -112,17 +135,113 @@ echo "  JobID:      ${SLURM_JOB_ID}"
 echo "  Started:    $(date)"
 echo "================================================================"
 
-# ---- Pipeline (no D17) ----------------------------------------------------
+# ---- Pipeline — dual-scale chain A→J --------------------------------------
+RSCRIPT="${RSCRIPT_BIN:-Rscript}"
+
+# ════════════════════════════════════════════════════════════════════════════
+# COARSE pass (win50000.step10000) — full sim_mat + MDS + L1/L2 detection
+# ════════════════════════════════════════════════════════════════════════════
+export PESTPG_SCALE="${COARSE_PESTPG_SCALE}"
+
 echo ""
-echo "[$(date)] [${CHROM}] === STEP_TR_A precompute ==="
-"${RSCRIPT_BIN:-Rscript}" "${TR_STEPS}/STEP_TR_A_compute_theta_matrices.R" \
+echo "[$(date)] [${CHROM}] === A coarse — theta_native @ ${PESTPG_SCALE} ==="
+"${RSCRIPT}" "${TR_STEPS}/STEP_TR_A_compute_theta_matrices.R" \
   --chrom "${CHROM}"
 
 echo ""
-echo "[$(date)] [${CHROM}] === STEP_TR_B classifier ==="
-"${RSCRIPT_BIN:-Rscript}" "${TR_STEPS}/STEP_TR_B_classify_theta.R" \
+echo "[$(date)] [${CHROM}] === B coarse — local PCA per window ==="
+"${RSCRIPT}" "${TR_STEPS}/STEP_TR_B_local_pca_compute.R" \
   --chrom "${CHROM}"
 
 echo ""
-echo "[$(date)] [${CHROM}] === DONE (no D17) ==="
-ls -lh "${JSON_OUT_DIR}/${CHROM}/${CHROM}_phase2_theta.json"
+echo "[$(date)] [${CHROM}] === C coarse — MDS + features (mode=full) ==="
+"${RSCRIPT}" "${TR_STEPS}/STEP_TR_C_mds_compute.R" \
+  --chrom "${CHROM}" \
+  --mode  full
+
+echo ""
+echo "[$(date)] [${CHROM}] === D — detect_L1 (nn80) ==="
+"${RSCRIPT}" "${TR_STEPS}/STEP_TR_D_detect_L1.R" \
+  --precomp_dir "${OUTROOT}/precomp" \
+  --chr         "${CHROM}" \
+  --outdir      "${OUTROOT}/L1_detect"
+
+echo ""
+echo "[$(date)] [${CHROM}] === E — plot_L1 ==="
+"${RSCRIPT}" "${TR_STEPS}/STEP_TR_E_plot_L1.R" \
+  --precomp_dir "${OUTROOT}/precomp" \
+  --L1_dir      "${OUTROOT}/L1_detect" \
+  --chr         "${CHROM}" \
+  --outdir      "${OUTROOT}/L1_plots"
+
+echo ""
+echo "[$(date)] [${CHROM}] === F — detect_L2 (nn40 inside each L1) ==="
+"${RSCRIPT}" "${TR_STEPS}/STEP_TR_F_detect_L2.R" \
+  --precomp_dir "${OUTROOT}/precomp" \
+  --L1_dir      "${OUTROOT}/L1_detect" \
+  --chr         "${CHROM}" \
+  --outdir      "${OUTROOT}/L2_detect"
+
+echo ""
+echo "[$(date)] [${CHROM}] === G — plot_L2 ==="
+"${RSCRIPT}" "${TR_STEPS}/STEP_TR_G_plot_L2.R" \
+  --precomp_dir "${OUTROOT}/precomp" \
+  --L1_dir      "${OUTROOT}/L1_detect" \
+  --L2_dir      "${OUTROOT}/L2_detect" \
+  --chr         "${CHROM}" \
+  --outdir      "${OUTROOT}/L2_plots"
+
+# ════════════════════════════════════════════════════════════════════════════
+# DENSE pass (win10000.step2000) — banded sim_mat only, no MDS, no NN-smooths
+# Switch PESTPG_SCALE so TR_A/B/C/I all read the dense theta_native files.
+# ════════════════════════════════════════════════════════════════════════════
+export PESTPG_SCALE="${DENSE_PESTPG_SCALE}"
+
+echo ""
+echo "[$(date)] [${CHROM}] === A dense — theta_native @ ${PESTPG_SCALE} ==="
+"${RSCRIPT}" "${TR_STEPS}/STEP_TR_A_compute_theta_matrices.R" \
+  --chrom "${CHROM}"
+
+echo ""
+echo "[$(date)] [${CHROM}] === B dense — local PCA per window ==="
+"${RSCRIPT}" "${TR_STEPS}/STEP_TR_B_local_pca_compute.R" \
+  --chrom "${CHROM}"
+
+echo ""
+echo "[$(date)] [${CHROM}] === C dense — banded sim_mat only (mode=local) ==="
+"${RSCRIPT}" "${TR_STEPS}/STEP_TR_C_mds_compute.R" \
+  --chrom         "${CHROM}" \
+  --mode          local \
+  --sim-band-half 100 \
+  --out_subdir    precomp_dense
+
+# ════════════════════════════════════════════════════════════════════════════
+# MERGE pass — H/I/J consume coarse L1/L2 envelopes + dense per-window data.
+# PESTPG_SCALE stays at dense so TR_I reads the dense theta_native TSV.
+# H and I auto-prefer ${OUTROOT}/precomp_dense if present.
+# J reads BOTH precomps and emits the merged page-12 JSON with grid_map.
+# ════════════════════════════════════════════════════════════════════════════
+echo ""
+echo "[$(date)] [${CHROM}] === H — classify_carriers (k-means on dense PC1 per coarse L2) ==="
+"${RSCRIPT}" "${TR_STEPS}/STEP_TR_H_classify_carriers.R" \
+  --chr "${CHROM}"
+
+echo ""
+echo "[$(date)] [${CHROM}] === I — per-sample + band-mean CUSUM (dense theta inside coarse L2) ==="
+"${RSCRIPT}" "${TR_STEPS}/STEP_TR_I_cusum_per_carrier.R" \
+  --chr "${CHROM}" \
+  --lib "${TR_STEPS}/lib_persample_cusum.R"
+
+echo ""
+echo "[$(date)] [${CHROM}] === J — atlas JSON (merged dual-scale page-12 bundle) ==="
+"${RSCRIPT}" "${TR_STEPS}/STEP_TR_J_atlas_json.R" \
+  --chr                 "${CHROM}" \
+  --coarse_precomp_dir  "${OUTROOT}/precomp" \
+  --dense_precomp_dir   "${OUTROOT}/precomp_dense" \
+  --coarse_pestpg_scale "${COARSE_PESTPG_SCALE}" \
+  --dense_pestpg_scale  "${DENSE_PESTPG_SCALE}"
+
+echo ""
+echo "[$(date)] [${CHROM}] === DONE (dual-scale A→J) ==="
+ls -lh "${JSON_OUT_DIR}/${CHROM}/${CHROM}_phase2_theta.json" 2>/dev/null \
+  || echo "[WARN] expected JSON not found at ${JSON_OUT_DIR}/${CHROM}/${CHROM}_phase2_theta.json"

@@ -1,28 +1,36 @@
 #!/usr/bin/env Rscript
 # =============================================================================
-# STEP_TR_E_classify_carriers.R   (drafts/v5)
+# STEP_TR_H_classify_carriers.R
 # =============================================================================
 # Per-candidate carrier classification via k-means on local-PCA loadings.
 # For each L2 candidate, take the per-sample mean PC1 over the candidate's
 # window range, run k-means with k = 2..max_k, pick best k via approximate
 # silhouette, label clusters by ascending centre as LOW_DIV / MID_DIV /
-# HIGH_DIV (or DIV_TIER_k for k > 3). These cluster labels feed STEP_TR_F
-# as the carrier partition for per-band CUSUM.
+# HIGH_DIV (or DIV_TIER_k for k > 3). These cluster labels feed TR_I as the
+# carrier partition for per-band CUSUM.
 #
-# Reads:   <PRECOMP_DIR>/<chr>.precomp.rds          (z-blocks layout)
-#          <L2_DIR>/<chr>.L2_envelopes.tsv          (output of STEP_TR_D)
+# Dual-scale aware (May 2026): in the dual-scale design, L2 envelopes come
+# from the COARSE precomp (TR_F), but the k-means inside each envelope wants
+# the DENSE per-window per-sample PC1 for finer carrier resolution. Default
+# precomp dir is therefore $OUTROOT/precomp_dense if it exists, falling back
+# to $OUTROOT/precomp for single-scale legacy runs. The L2 envelope's bp
+# range is scale-agnostic (start_bp/end_bp), so windows_in_range() resolves
+# it against whichever precomp's window grid is loaded.
+#
+# Reads:   <PRECOMP_DIR>/<chr>.precomp.rds          (precomp_dense if available)
+#          <L2_DIR>/<chr>.L2_envelopes.tsv          (output of TR_F, COARSE scale)
 # Writes:  <OUT_DIR>/<chr>.carrier_assignments.tsv
 #            One row per (sample × candidate). Columns:
 #              candidate_id  chrom  sample_id  band  k_chosen  silhouette
 #              mean_pc1  mean_pc2  inside_l2_windows
 #
-# Defaults assume the z-blocks-shaped layout produced by TR_B v5:
-#   PRECOMP_DIR = $OUTROOT/precomp
-#   L2_DIR      = $OUTROOT/L2_detect       (where you ran STEP_TR_D)
+# Defaults:
+#   PRECOMP_DIR = $OUTROOT/precomp_dense   (or $OUTROOT/precomp if dense missing)
+#   L2_DIR      = $OUTROOT/L2_detect       (coarse-scale envelopes from TR_F)
 #   OUT_DIR     = $OUTROOT/carriers
 #
 # Usage:
-#   Rscript STEP_TR_E_classify_carriers.R --chr <CHR>
+#   Rscript STEP_TR_H_classify_carriers.R --chr <CHR>
 #                                          [--precomp_dir <dir>]
 #                                          [--l2_dir <dir>]
 #                                          [--out_dir <dir>]
@@ -43,9 +51,13 @@ OUT_DIR      <- get_arg("--out_dir")
 MAX_K        <- as.integer(get_arg("--max-k", "3"))
 
 OUTROOT <- Sys.getenv("OUTROOT", unset = NA)
-if (is.na(PRECOMP_DIR)) PRECOMP_DIR <- file.path(OUTROOT, "precomp")
+if (is.na(PRECOMP_DIR)) {
+  dense_dir <- file.path(OUTROOT, "precomp_dense")
+  PRECOMP_DIR <- if (dir.exists(dense_dir)) dense_dir else file.path(OUTROOT, "precomp")
+}
 if (is.na(L2_DIR))      L2_DIR      <- file.path(OUTROOT, "L2_detect")
 if (is.na(OUT_DIR))     OUT_DIR     <- file.path(OUTROOT, "carriers")
+message("[TR_H] precomp dir: ", PRECOMP_DIR)
 dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
 chroms <- if (!is.na(CHR)) CHR else
@@ -92,7 +104,7 @@ for (chrom in chroms) {
   rds <- file.path(PRECOMP_DIR, paste0(chrom, ".precomp.rds"))
   l2f <- file.path(L2_DIR,      paste0(chrom, ".L2_envelopes.tsv"))
   if (!file.exists(rds) || !file.exists(l2f)) {
-    message("[TR_E] ", chrom, ": missing precomp or L2 — skip"); next
+    message("[TR_H] ", chrom, ": missing precomp or L2 — skip"); next
   }
   precomp <- readRDS(rds); dt <- precomp$dt
   l2_dt <- fread(l2f)
@@ -105,7 +117,7 @@ for (chrom in chroms) {
   pc1_cols <- grep("^PC_1_", names(dt), value = TRUE)
   pc2_cols <- grep("^PC_2_", names(dt), value = TRUE)
   if (length(pc1_cols) == 0L) {
-    message("[TR_E] ", chrom, ": precomp has no PC_1_<sample> columns — skip"); next
+    message("[TR_H] ", chrom, ": precomp has no PC_1_<sample> columns — skip"); next
   }
   pc1_mat <- as.matrix(dt[, ..pc1_cols])
   pc2_mat <- if (length(pc2_cols) > 0) as.matrix(dt[, ..pc2_cols]) else NULL
@@ -156,8 +168,8 @@ for (chrom in chroms) {
   }
   out_dt <- if (length(out) > 0) rbindlist(out) else data.table()
   fwrite(out_dt, file.path(OUT_DIR, paste0(chrom, ".carrier_assignments.tsv")), sep = "\t")
-  message(sprintf("[TR_E] %s: classified %d candidates (%d sample-rows)",
+  message(sprintf("[TR_H] %s: classified %d candidates (%d sample-rows)",
                   chrom, length(unique(out_dt$candidate_id)), nrow(out_dt)))
 }
 
-message("[TR_E] DONE")
+message("[TR_H] DONE")

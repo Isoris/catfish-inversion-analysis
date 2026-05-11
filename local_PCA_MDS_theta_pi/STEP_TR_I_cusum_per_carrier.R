@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # =============================================================================
-# STEP_TR_F_cusum_per_carrier.R   (drafts/v5)
+# STEP_TR_I_cusum_per_carrier.R
 # =============================================================================
 # Per-carrier CUSUM inside each L2 candidate. Two outputs per (candidate ×
 # band):
@@ -16,22 +16,30 @@
 #
 # Both are stacked in cusum_boundary_dist.tsv.
 #
-# Reads:   <PRECOMP_DIR>/<chr>.precomp.rds
-#          <L2_DIR>/<chr>.L2_envelopes.tsv
-#          <CARRIERS_DIR>/<chr>.carrier_assignments.tsv
-#          $THETA_TSV_DIR/theta_native.<chr>.<scale>.tsv.gz   (re-read for θπ values)
-#          v5_drafts/lib_persample_cusum.R                     (CUSUM kernel)
+# Dual-scale aware (May 2026): the per-sample CUSUM is the FINEST step of
+# the chain — refines coarse L2 boundaries by walking a dense per-window
+# theta_pi trace inside each L2 envelope. Default precomp_dir is therefore
+# $OUTROOT/precomp_dense if it exists, falling back to $OUTROOT/precomp.
+# PESTPG_SCALE env should match — the dense theta_native TSV is what the
+# CUSUM walks. The L2 envelopes (from TR_F) are scale-agnostic via
+# start_bp/end_bp.
+#
+# Reads:   <PRECOMP_DIR>/<chr>.precomp.rds                        (dense by default)
+#          <L2_DIR>/<chr>.L2_envelopes.tsv                         (coarse-scale envelopes)
+#          <CARRIERS_DIR>/<chr>.carrier_assignments.tsv            (from TR_H)
+#          $THETA_TSV_DIR/theta_native.<chr>.<scale>.tsv.gz        (DENSE θπ values)
+#          lib_persample_cusum.R                                   (CUSUM kernel)
 # Writes:  <OUT_DIR>/<chr>.cusum_per_sample.tsv.gz
 #          <OUT_DIR>/<chr>.cusum_boundary_dist.tsv
 #
-# Defaults (z-blocks-shaped layout from TR_B v5):
-#   PRECOMP_DIR  = $OUTROOT/precomp
-#   L2_DIR       = $OUTROOT/L2_detect
+# Defaults:
+#   PRECOMP_DIR  = $OUTROOT/precomp_dense  (or $OUTROOT/precomp if dense missing)
+#   L2_DIR       = $OUTROOT/L2_detect      (coarse-scale envelopes)
 #   CARRIERS_DIR = $OUTROOT/carriers
 #   OUT_DIR      = $OUTROOT/cusum
 #
 # Usage:
-#   Rscript STEP_TR_F_cusum_per_carrier.R --chr <CHR>
+#   Rscript STEP_TR_I_cusum_per_carrier.R --chr <CHR>
 #                                          [--lib <path/to/lib_persample_cusum.R>]
 #                                          [--bands "MID_DIV,HIGH_DIV"]
 # =============================================================================
@@ -56,26 +64,29 @@ THETA_TSV_DIR <- Sys.getenv("THETA_TSV_DIR", unset = NA)
 PESTPG_SCALE  <- Sys.getenv("PESTPG_SCALE",  unset = "win10000.step2000")
 stopifnot(!is.na(OUTROOT), !is.na(THETA_TSV_DIR))
 
-if (is.na(PRECOMP_DIR))  PRECOMP_DIR  <- file.path(OUTROOT, "precomp")
+if (is.na(PRECOMP_DIR)) {
+  dense_dir <- file.path(OUTROOT, "precomp_dense")
+  PRECOMP_DIR <- if (dir.exists(dense_dir)) dense_dir else file.path(OUTROOT, "precomp")
+}
 if (is.na(L2_DIR))       L2_DIR       <- file.path(OUTROOT, "L2_detect")
 if (is.na(CARRIERS_DIR)) CARRIERS_DIR <- file.path(OUTROOT, "carriers")
 if (is.na(OUT_DIR))      OUT_DIR      <- file.path(OUTROOT, "cusum")
 dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
+message("[TR_I] precomp dir: ", PRECOMP_DIR, " (PESTPG_SCALE=", PESTPG_SCALE, ")")
 
 # Locate the CUSUM kernel.
 if (is.na(LIB_PATH)) {
   guesses <- c(
     "lib_persample_cusum.R",
-    "v5_drafts/lib_persample_cusum.R",
     file.path(getwd(), "lib_persample_cusum.R"),
     file.path(dirname(get_arg("--file=", "")), "lib_persample_cusum.R")
   )
   hit <- guesses[file.exists(guesses)]
-  if (length(hit) == 0L) stop("[TR_F] cannot locate lib_persample_cusum.R — pass --lib")
+  if (length(hit) == 0L) stop("[TR_I] cannot locate lib_persample_cusum.R — pass --lib")
   LIB_PATH <- hit[1]
 }
 source(LIB_PATH)
-message("[TR_F] CUSUM kernel: ", LIB_PATH)
+message("[TR_I] CUSUM kernel: ", LIB_PATH)
 
 chroms <- if (!is.na(CHR)) CHR else
   sub("\\.precomp\\.rds$", "",
@@ -103,7 +114,7 @@ for (chrom in chroms) {
   l2f <- file.path(L2_DIR,       paste0(chrom, ".L2_envelopes.tsv"))
   caf <- file.path(CARRIERS_DIR, paste0(chrom, ".carrier_assignments.tsv"))
   if (!all(file.exists(c(rds, l2f, caf)))) {
-    message("[TR_F] ", chrom, ": missing inputs — skip"); next
+    message("[TR_I] ", chrom, ": missing inputs — skip"); next
   }
   precomp <- readRDS(rds); dt <- precomp$dt
   l2_dt <- fread(l2f); ca_dt <- fread(caf)
@@ -121,7 +132,7 @@ for (chrom in chroms) {
   # Reload θπ values from theta_native TSV (matrix isn't on the precomp.rds).
   tsv <- file.path(THETA_TSV_DIR,
                    sprintf("theta_native.%s.%s.tsv.gz", chrom, PESTPG_SCALE))
-  if (!file.exists(tsv)) { message("[TR_F] ", chrom, ": no TSV — skip"); next }
+  if (!file.exists(tsv)) { message("[TR_I] ", chrom, ": no TSV — skip"); next }
   long_dt <- fread(tsv)
   this_chrom <- chrom
   long_dt <- long_dt[chrom == this_chrom]
@@ -214,8 +225,8 @@ for (chrom in chroms) {
   fwrite(ps_dt, file.path(OUT_DIR, paste0(chrom, ".cusum_per_sample.tsv.gz")),
          sep = "\t", compress = "gzip")
   fwrite(bd_dt, file.path(OUT_DIR, paste0(chrom, ".cusum_boundary_dist.tsv")), sep = "\t")
-  message(sprintf("[TR_F] %s: %d cusum rows across %d candidates",
+  message(sprintf("[TR_I] %s: %d cusum rows across %d candidates",
                   chrom, nrow(ps_dt), length(unique(ps_dt$candidate_id))))
 }
 
-message("[TR_F] DONE")
+message("[TR_I] DONE")

@@ -1,5 +1,13 @@
 # STEP_TR_A + STEP_TR_B θπ scaling patch — Apr 30, 2026
 
+> **STATUS (May 2026):** The per-site fix described here is now permanent
+> in `STEP_TR_A_compute_theta_matrices.R` (emits per-site `theta_pi` +
+> raw `tP_sum` + `n_sites` in the same TSV). Downstream B/C/.../J read
+> `theta_pi` directly. The STEP_TR_B referenced below is the old
+> classifier (`STEP_TR_B_classify_theta.R`), now retired in `_legacy/` —
+> the current TR_B is `STEP_TR_B_local_pca_compute.R` (PCA only). This
+> document is kept for historical context on the scaling rationale.
+
 ## Why
 
 ANGSD's `pestPG` `tP` column is the **sum of per-site θπ across sites with

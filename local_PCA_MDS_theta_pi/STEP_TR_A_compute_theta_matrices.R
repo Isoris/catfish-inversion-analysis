@@ -8,11 +8,11 @@
 # long-format TSV with one row per (sample, window) carrying the pairwise
 # nucleotide diversity θπ and the per-window callable-site count.
 #
-# This is the heavy half of an A/B pair: STEP_TR_B_classify_theta.R is the
-# light classifier that consumes the TSV, computes per-window population
-# metrics + robust |Z|, runs per-window local PCA on the samples × windows
-# θπ matrix, calls L2 envelopes from contiguous high-|Z| runs, and writes
-# the consolidated atlas JSON.
+# This is step A of the chain. The TSV it produces is consumed by:
+#   STEP_TR_B_local_pca_compute.R  (per-window local PCA + anchor-flip)
+#   STEP_TR_C_mds_compute.R        (sim_mat + MDS + features → precomp.rds)
+# and downstream steps D–J. The legacy `STEP_TR_B_classify_theta.R` (the old
+# self-contained classifier+JSON emitter) is retired in `_legacy/`.
 #
 # pestPG column layout (verified against ANGSD thetaStat output)
 # --------------------------------------------------------------
