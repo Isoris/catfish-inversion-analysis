@@ -1,401 +1,372 @@
 #!/usr/bin/env Rscript
-
 # =============================================================================
-# STEP_GH_A_compute_matrices.R
+# STEP_GH_A_compute_matrices.R  (v2 — clean rewrite, 2026-05-12)
+# =============================================================================
+# GHSL stage A: per-sample × per-window haplotype-divergence matrices.
 #
-# GHSL stage A — HEAVY ENGINE: Compute + Save Divergence Matrices
+# Reads a Clair3 phased-SNP TSV for one chromosome, builds raw 5 kb (or
+# whatever window grid the precomp dictates) divergence matrices, and
+# produces multi-scale rolling aggregates for downstream local PCA / MDS
+# (GH_B, GH_C) and the existing classifier (GH_B_classify).
 #
-# PURPOSE:
-#   Run ONCE per chromosome. Loads 77M+ phased Clair3 variants, computes
-#   per-sample within-haplotype divergence at raw window resolution, then
-#   applies rolling means at multiple configurable scales. Saves everything
-#   as RDS for the light classifier (STEP_GH_B) to iterate on in ~30 s.
+# Definition (GHSL, Genome Heterozygosity by Sequence Length, after the
+# Nature hybrid-potato 2024 paper):
 #
-# WHAT IT COMPUTES:
-#   1. Raw div_mat [N_samples × N_windows]: ghsl_div = n_phased_het / n_total
-#   2. Raw het_mat [N_samples × N_windows]: het_div = n_all_het / n_total
-#   3. Rolling means at configurable scales (default: 10,20,30,40,50,100 win)
-#   4. Metadata: n_sites_mat, n_phased_het_mat, window coords, sample names
+#   For each sample s and window w:
+#     div[s, w] = n_phased_het[s, w] / n_total[s, w]
+#     het[s, w] = n_all_het[s, w]    / n_total[s, w]
 #
-# WHAT IT DOES NOT DO:
-#   No scoring. No karyotype calling. No PASS/FAIL. That's STEP_GH_B.
+#   Where:
+#     - n_phased_het = HET sites with phase_gt matching "0|1" or "1|0"
+#                      (positive evidence that hap1 ≠ hap2 within the
+#                       sample at that site)
+#     - n_all_het    = HET sites regardless of phase ("0|1", "1|0", "0/1")
+#     - n_total      = all called variants for the sample in the window
+#                      (phased hets + unphased hets + hom_var; hom_ref
+#                       is filtered upstream by Clair3)
 #
-# OUTPUT:
-#   <outdir>/<chr>.ghsl_matrices.rds  — one RDS per chromosome containing:
-#     $div_mat          — raw GHSL divergence [samples × windows]
-#     $het_mat          — raw het rate [samples × windows]
-#     $n_sites_mat      — total variants per sample × window
-#     $n_phased_het_mat — phased het count per sample × window
-#     $rolling           — named list of rolling div_mats by scale
-#     $rolling_het       — named list of rolling het_mats by scale
-#     $window_info      — data.table with window coords (start_bp, end_bp, etc.)
-#     $sample_names     — character vector of sample IDs
-#     $chrom            — chromosome name
-#     $params           — list of parameters used
+# Per-window denominator uses *all* variants (including hom_var) so the
+# ratio is normalized by sequence length, as in the Nature paper. This
+# matters for HOM samples: their dense hom_var contribution pushes the
+# ratio toward 0, while HET carriers in unrecombining inversions push
+# the ratio up. The "denominator confound" (carriers have systematically
+# more variants inside inversions) is a known limitation, mitigated at
+# downstream scales by rolling smoothing.
+#
+# v2 changes vs v6 / chat-14 paste:
+#   1. SPEEDUP: compute_divergence_matrix is now a single data.table
+#      group-by aggregation (no nested for(wi) for(si) loop). The "|"
+#      match is grepl(..., fixed = TRUE), not regex. Expected: 100x+
+#      end-to-end on a 5 kb-grid chromosome.
+#   2. CORRECTNESS: rolling[["sK"]] is now the *ratio of sums*
+#      (rolling_n_phased_het / rolling_n_total), not the mean of ratios.
+#      Equivalent to weighting each raw window's ratio by its variant
+#      count. Stable under sparse low-coverage windows.
+#   3. NEW OUTPUTS: rolling_n_total[["sK"]] and rolling_n_phased_het[["sK"]]
+#      stored alongside rolling[["sK"]]. Required by GH_B's local PCA
+#      heteroscedastic weight (sqrt(n_tot / median(n_tot))) and useful
+#      for QC overlays in the atlas.
+#   4. CLEAN: sample list is read from --sample_list (one id per line),
+#      not reverse-engineered from precomp.rds PC_1_* columns. Precomp
+#      is read only for window grid (start_bp, end_bp).
+#
+# Output (one file per chromosome):
+#   <outdir>/<chr>.ghsl_matrices.rds
+#     $div_mat                  — [n_samp × n_win] raw n_phased_het/n_total
+#     $het_mat                  — [n_samp × n_win] raw n_all_het/n_total
+#     $n_total_mat              — [n_samp × n_win] integer denominator
+#     $n_phased_het_mat         — [n_samp × n_win] integer numerator
+#     $n_all_het_mat            — [n_samp × n_win] integer all-het count
+#     $rolling                  — list of [n_samp × n_win] ratio-of-sums
+#                                  matrices, one per scale ("s10","s50",…)
+#     $rolling_het              — same shape, het-fraction
+#     $rolling_n_total          — list of [n_samp × n_win] integer rolling
+#                                  sums of n_total (per scale)
+#     $rolling_n_phased_het     — same, rolling sums of n_phased_het
+#     $window_info              — data.table: window_idx, start_bp, end_bp, mid_bp
+#     $sample_names             — character [n_samp]
+#     $chrom                    — character
+#     $params                   — list of run parameters
 #
 # Usage:
-#   Rscript STEP_GH_A_compute_matrices.R <precomp_dir> <ghsl_prep_dir> <outdir> \
-#     [--chrom C_gar_LG01] [--scales 10,20,30,40,50,100] [--min_phased 3]
+#   Rscript STEP_GH_A_compute_matrices.R \
+#     --precomp_dir <dir>            # window grid source (*.precomp.rds)
+#     --ghsl_prep_dir <dir>          # <chr>.merged_phased_snps.tsv.gz inputs
+#     --sample_list <file>           # one sample id per line
+#     --outdir <dir>                 # output for <chr>.ghsl_matrices.rds
+#     [--chrom <chr>]                # single chromosome (default: all in precomp_dir)
+#     [--scales 10,50,100]           # rolling scales (default: 10,50,100)
+#     [--min_total 3]                # min n_total per (sample, window) to score
+#     [--qual_min 20]                # min QUAL filter on variants
+#     [--gq_min 10]                  # min GQ filter on variants
 # =============================================================================
 
 suppressPackageStartupMessages({
   library(data.table)
 })
 
-`%||%` <- function(a, b) if (is.null(a) || length(a) == 0) b else a
-
-# =============================================================================
-# PARSE ARGUMENTS
-# =============================================================================
+# ── Argument parsing ─────────────────────────────────────────────────────────
+PRECOMP_DIR   <- NA_character_
+GHSL_PREP_DIR <- NA_character_
+SAMPLE_LIST   <- NA_character_
+OUTDIR        <- NA_character_
+CHROM         <- NULL
+SCALES        <- c(10L, 50L, 100L)
+MIN_TOTAL     <- 3L
+QUAL_MIN      <- 20
+GQ_MIN        <- 10
 
 args <- commandArgs(trailingOnly = TRUE)
-if (length(args) < 3) stop(paste(
-  "Usage: Rscript STEP_GH_A_compute_matrices.R <precomp_dir> <ghsl_prep_dir> <outdir> [opts]",
-  "  --chrom <chr>       Process single chromosome",
-  "  --scales 20,50,100  Rolling window scales (comma-separated)",
-  "  --min_phased 3      Min phased sites per sample per window",
-  "  --qual_min 20       Min QUAL for variant filtering",
-  "  --gq_min 10         Min GQ for variant filtering",
-  sep = "\n"
-))
-
-precomp_dir   <- args[1]
-ghsl_prep_dir <- args[2]
-outdir        <- args[3]
-
-# Defaults
-chrom_filter     <- NULL
-# Chat 14 (2026-04-18): expanded default scale ladder.
-# The previous default (20, 50, 100) skipped the 100-200 kb range
-# where sub-inversions and short recombinant tracts live. New ladder
-# gives an evenly-spaced fine ladder for detail work (10..50) plus
-# s100 for chromosome-overview plotting. All scales are computed from
-# the same 5-kb base matrix so the added cost is small (a few
-# frollmean passes).
-#   s10  = ~50 kb rolling
-#   s20  = ~100 kb
-#   s30  = ~150 kb
-#   s40  = ~200 kb
-#   s50  = ~250 kb   (primary display/karyotype/score scale)
-#   s100 = ~500 kb   (overview scale)
-ROLLING_SCALES   <- c(10L, 20L, 30L, 40L, 50L, 100L)
-MIN_PHASED_SITES <- 3L
-QUAL_MIN         <- 20
-GQ_MIN           <- 10
-
-i <- 4L
+i <- 1L
 while (i <= length(args)) {
   a <- args[i]
-  if (a == "--chrom" && i < length(args)) {
-    chrom_filter <- args[i + 1]; i <- i + 2L
-  } else if (a == "--scales" && i < length(args)) {
-    ROLLING_SCALES <- as.integer(strsplit(args[i + 1], ",")[[1]])
-    i <- i + 2L
-  } else if (a == "--min_phased" && i < length(args)) {
-    MIN_PHASED_SITES <- as.integer(args[i + 1]); i <- i + 2L
-  } else if (a == "--qual_min" && i < length(args)) {
-    QUAL_MIN <- as.numeric(args[i + 1]); i <- i + 2L
-  } else if (a == "--gq_min" && i < length(args)) {
-    GQ_MIN <- as.numeric(args[i + 1]); i <- i + 2L
-  } else { i <- i + 1L }
-}
-
-dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
-
-message("================================================================")
-message("[GH_A] GHSL stage A: HEAVY ENGINE — Divergence Matrices")
-message("================================================================")
-message("[GH_A] Precomp:        ", precomp_dir)
-message("[GH_A] GHSL prep:      ", ghsl_prep_dir)
-message("[GH_A] Output:         ", outdir)
-message("[GH_A] MIN_PHASED=", MIN_PHASED_SITES)
-message("[GH_A] Rolling scales: ", paste(ROLLING_SCALES, collapse = ", "), " windows")
-
-# =============================================================================
-# LOAD PRECOMP (for window grid and sample names)
-# =============================================================================
-
-rds_files <- sort(list.files(precomp_dir, pattern = "\\.precomp\\.rds$", full.names = TRUE))
-if (length(rds_files) == 0) stop("[GH_A] FATAL: No .precomp.rds files in: ", precomp_dir)
-message("[GH_A] Found ", length(rds_files), " precomp RDS files")
-
-# Chat 14 (2026-04-18) chunking fix:
-# Previously the loop below eagerly readRDS'd every chromosome's
-# precomp file into `precomp_list` BEFORE the --chrom filter was
-# applied, wasting 1–3 GB RAM for single-chromosome runs. Now we
-# build a filename→chrom index by peeking at each file's `chrom`
-# field (cheap: readRDS + access + discard), apply --chrom filter
-# to the index, and then readRDS the heavy matrices ONLY for the
-# chromosomes we actually process, inside the main loop.
-
-# Build index: filename -> chrom (without retaining matrix payloads)
-precomp_index <- list()  # chrom -> file path
-for (f in rds_files) {
-  obj <- readRDS(f)
-  chr_name <- obj$chrom
-  precomp_index[[chr_name]] <- f
-  rm(obj); invisible(gc(verbose = FALSE, full = FALSE))
-}
-chroms <- names(precomp_index)
-if (!is.null(chrom_filter)) chroms <- intersect(chroms, chrom_filter)
-
-# Get sample names by peeking at one file (first chrom we'll actually use)
-precomp_sample_names <- NULL
-if (length(chroms) > 0) {
-  obj <- readRDS(precomp_index[[chroms[1]]])
-  pc1_cols <- grep("^PC_1_", names(obj$dt), value = TRUE)
-  if (length(pc1_cols) > 0) precomp_sample_names <- sub("^PC_1_", "", pc1_cols)
-  rm(obj); invisible(gc(verbose = FALSE, full = FALSE))
-}
-if (is.null(precomp_sample_names)) stop("[GH_A] FATAL: No PC_1_ columns found")
-n_samples <- length(precomp_sample_names)
-sample_names <- precomp_sample_names
-
-# Map Ind→CGA
-if (grepl("^Ind[0-9]", sample_names[1])) {
-  sf <- Sys.getenv("SAMPLES_IND", "")
-  if (!nzchar(sf) || !file.exists(sf)) {
-    base <- Sys.getenv("BASE", "/scratch/lt200308-agbsci/Quentin_project_KEEP_2026-02-04")
-    for (candidate in c(
-      file.path(base, "het_roh/01_inputs_check/samples.ind"),
-      file.path(base, "popstruct_thin/list_of_samples_one_per_line_same_bamfile_list.tsv")
-    )) {
-      if (file.exists(candidate)) { sf <- candidate; break }
-    }
+  if      (a == "--precomp_dir"   && i < length(args)) { PRECOMP_DIR   <- args[i + 1]; i <- i + 2L }
+  else if (a == "--ghsl_prep_dir" && i < length(args)) { GHSL_PREP_DIR <- args[i + 1]; i <- i + 2L }
+  else if (a == "--sample_list"   && i < length(args)) { SAMPLE_LIST   <- args[i + 1]; i <- i + 2L }
+  else if (a == "--outdir"        && i < length(args)) { OUTDIR        <- args[i + 1]; i <- i + 2L }
+  else if (a == "--chrom"         && i < length(args)) { CHROM         <- args[i + 1]; i <- i + 2L }
+  else if (a == "--scales"        && i < length(args)) {
+    SCALES <- as.integer(strsplit(args[i + 1], "[ ,]+")[[1]]); i <- i + 2L
   }
-  if (nzchar(sf) && file.exists(sf)) {
-    real <- trimws(readLines(sf))
-    real <- real[nzchar(real)]
-    if (length(real) == n_samples) {
-      sample_names <- real
-      message("[GH_A] Sample mapping: ", precomp_sample_names[1], " -> ", sample_names[1],
-              " (", n_samples, " samples)")
-    }
-  }
+  else if (a == "--min_total"     && i < length(args)) { MIN_TOTAL <- as.integer(args[i + 1]); i <- i + 2L }
+  else if (a == "--qual_min"      && i < length(args)) { QUAL_MIN  <- as.numeric(args[i + 1]); i <- i + 2L }
+  else if (a == "--gq_min"        && i < length(args)) { GQ_MIN    <- as.numeric(args[i + 1]); i <- i + 2L }
+  else { i <- i + 1L }
+}
+stopifnot(!is.na(PRECOMP_DIR), !is.na(GHSL_PREP_DIR),
+          !is.na(SAMPLE_LIST), !is.na(OUTDIR))
+SCALES <- sort(unique(SCALES[SCALES > 0L]))
+dir.create(OUTDIR, recursive = TRUE, showWarnings = FALSE)
+
+# ── Sample list ──────────────────────────────────────────────────────────────
+sample_names <- readLines(SAMPLE_LIST)
+sample_names <- sample_names[nchar(sample_names) > 0]
+n_samp <- length(sample_names)
+message("[GH_A] cohort: ", n_samp, " samples")
+message("[GH_A] scales: ", paste(SCALES, collapse = ","))
+message("[GH_A] min_total=", MIN_TOTAL, ", qual_min=", QUAL_MIN, ", gq_min=", GQ_MIN)
+
+# ── Chromosome list (from precomp filenames) ─────────────────────────────────
+precomp_files <- sort(list.files(PRECOMP_DIR, pattern = "\\.precomp\\.rds$",
+                                 full.names = TRUE))
+if (length(precomp_files) == 0L) stop("[GH_A] no .precomp.rds files in ", PRECOMP_DIR)
+chrom_from_file <- sub("\\.precomp\\.rds$", "", basename(precomp_files))
+names(precomp_files) <- chrom_from_file
+chroms <- if (is.null(CHROM)) chrom_from_file else intersect(chrom_from_file, CHROM)
+if (length(chroms) == 0L) stop("[GH_A] --chrom ", CHROM, " not found in ", PRECOMP_DIR)
+message("[GH_A] chroms: ", length(chroms))
+
+# =============================================================================
+# Core: vectorized per-window aggregation
+# =============================================================================
+
+# Inputs:
+#   ghsl_dt    — data.table with columns: sample_id, pos, gt_class, phase_gt,
+#                qual?, gq?  (filtered upstream)
+#   win_grid   — data.table with columns: window_idx (0-based), start_bp, end_bp
+#   n_samp     — length(sample_names)
+#   sample_to_row — named integer: sample_id -> 1..n_samp
+#
+# Output: list of four matrices [n_samp × n_win]:
+#   n_total_mat, n_phased_het_mat, n_all_het_mat, plus the derived
+#   div_mat and het_mat. Missing (sample, window) cells stay NA (div, het)
+#   or 0 (count matrices).
+compute_divergence_matrices <- function(ghsl_dt, win_grid, n_samp, sample_to_row,
+                                        min_total) {
+  n_win <- nrow(win_grid)
+
+  # Annotate per-variant booleans once (vectorized, no per-row R calls)
+  ghsl_dt[, is_het    := tolower(gt_class) == "het"]
+  ghsl_dt[, is_phased := grepl("|", phase_gt, fixed = TRUE)]
+  # phased het = HET AND phase_gt has a literal "|"
+  ghsl_dt[, is_phased_het := is_het & is_phased]
+
+  # Bin each variant into a window by findInterval over start_bp.
+  # win_grid is sorted by start_bp; off-grid variants (pos < first start or
+  # pos > last end) become window_idx = NA and are dropped.
+  starts <- win_grid$start_bp
+  ends   <- win_grid$end_bp
+  ghsl_dt[, wi := findInterval(pos, starts)]
+  ghsl_dt <- ghsl_dt[wi >= 1L & wi <= n_win]
+  # Discard variants past their assigned window's end_bp
+  ghsl_dt <- ghsl_dt[pos <= ends[wi]]
+
+  # Restrict to samples we know about
+  ghsl_dt[, samp_row := sample_to_row[sample_id]]
+  ghsl_dt <- ghsl_dt[!is.na(samp_row)]
+
+  # Single group-by aggregation — replaces the nested for(wi) for(si) loop
+  agg <- ghsl_dt[, .(
+    n_total      = .N,
+    n_all_het    = sum(is_het),
+    n_phased_het = sum(is_phased_het)
+  ), by = .(samp_row, wi)]
+
+  # Pre-allocate output matrices
+  n_total_mat      <- matrix(0L, nrow = n_samp, ncol = n_win,
+                             dimnames = list(NULL, NULL))
+  n_phased_het_mat <- matrix(0L, nrow = n_samp, ncol = n_win)
+  n_all_het_mat    <- matrix(0L, nrow = n_samp, ncol = n_win)
+
+  # Scatter the agg into matrices (one matrix-indexed assignment per matrix)
+  rc <- cbind(agg$samp_row, agg$wi)
+  n_total_mat[rc]      <- agg$n_total
+  n_all_het_mat[rc]    <- agg$n_all_het
+  n_phased_het_mat[rc] <- agg$n_phased_het
+
+  # Derived ratios with min_total guard
+  div_mat <- matrix(NA_real_, nrow = n_samp, ncol = n_win)
+  het_mat <- matrix(NA_real_, nrow = n_samp, ncol = n_win)
+  ok <- n_total_mat >= min_total
+  div_mat[ok] <- n_phased_het_mat[ok] / n_total_mat[ok]
+  het_mat[ok] <- n_all_het_mat[ok]    / n_total_mat[ok]
+
+  list(div_mat          = div_mat,
+       het_mat          = het_mat,
+       n_total_mat      = n_total_mat,
+       n_phased_het_mat = n_phased_het_mat,
+       n_all_het_mat    = n_all_het_mat)
 }
 
-message("[GH_A] Samples: ", n_samples)
-message("[GH_A] Chromosomes: ", length(chroms))
-
 # =============================================================================
-# STAGE 1: Compute per-sample within-haplotype divergence (from v5, verbatim)
+# Multi-scale rolling: ratio of rolling sums (NOT mean of ratios)
 # =============================================================================
 
-compute_divergence_matrix <- function(ghsl_by_window, dt, n_win, available_samples) {
-  n_samp <- length(available_samples)
-  ghsl_mat <- matrix(NA_real_, nrow = n_samp, ncol = n_win,
-                     dimnames = list(available_samples, NULL))
-  het_mat  <- matrix(NA_real_, nrow = n_samp, ncol = n_win,
-                     dimnames = list(available_samples, NULL))
-  n_sites_mat <- matrix(0L, nrow = n_samp, ncol = n_win,
-                        dimnames = list(available_samples, NULL))
-  n_phased_het_mat <- matrix(0L, nrow = n_samp, ncol = n_win,
-                             dimnames = list(available_samples, NULL))
-
-  for (wi in seq_len(n_win)) {
-    win_dt <- ghsl_by_window[[as.character(wi)]]
-    if (is.null(win_dt) || nrow(win_dt) == 0) next
-
-    for (si in available_samples) {
-      sv <- win_dt[sample_id == si]
-      n_total <- nrow(sv)
-      if (n_total < MIN_PHASED_SITES) next
-
-      gt <- tolower(sv$gt_class)
-      n_het_all <- sum(gt == "het")
-
-      # Phased hets: phase_gt contains "|" (0|1 or 1|0)
-      phased_het <- sv[gt == "het" & grepl("\\|", phase_gt)]
-      n_phased_het <- nrow(phased_het)
-
-      ghsl_mat[si, wi] <- n_phased_het / n_total
-      het_mat[si, wi]  <- n_het_all / n_total
-      n_sites_mat[si, wi] <- n_total
-      n_phased_het_mat[si, wi] <- n_phased_het
-    }
-
-    if (wi %% 500 == 0) {
-      n_scored <- sum(!is.na(ghsl_mat[, wi]))
-      message("[GH_A]   Window ", wi, "/", n_win, " (", n_scored, " samples scored)")
-    }
-  }
-
-  list(ghsl = ghsl_mat, het = het_mat, n_sites = n_sites_mat,
-       n_phased_het = n_phased_het_mat)
-}
-
-# =============================================================================
-# STAGE 2: Rolling aggregation at multiple scales
-# =============================================================================
-
-compute_rolling_matrices <- function(raw_mat, scales) {
-  # For each scale K, compute per-sample rolling mean across K windows.
-  # Uses data.table::frollmean for speed.
-  # NA handling: na.rm = TRUE so partial windows at edges still produce values.
-  #
-  # Returns named list: rolling[["s20"]] = matrix same dims as raw_mat
-  
-  n_samp <- nrow(raw_mat)
-  n_win  <- ncol(raw_mat)
-  rolling <- list()
-
+# For each scale K, returns four [n_samp × n_win] matrices:
+#   rolling_n_total[[sK]]      — rolling SUM of n_total over K windows
+#   rolling_n_phased_het[[sK]] — rolling SUM of n_phased_het
+#   rolling_n_all_het[[sK]]    — rolling SUM of n_all_het
+#   rolling_div[[sK]]          — rolling SUM(n_phased_het) / rolling SUM(n_total)
+#   rolling_het[[sK]]          — rolling SUM(n_all_het)    / rolling SUM(n_total)
+#
+# data.table::frollsum operates column-by-column on a numeric vector. We
+# transpose to (n_win × n_samp), apply frollsum to each column (which is
+# fast C-level), then transpose back. This avoids the per-sample R loop
+# that the v6 paste used and processes all 226 samples per scale in one
+# data.table-style call.
+compute_rolling <- function(n_total_mat, n_phased_het_mat, n_all_het_mat, scales) {
+  n_samp <- nrow(n_total_mat); n_win <- ncol(n_total_mat)
+  out_total   <- list()
+  out_phased  <- list()
+  out_allhet  <- list()
+  out_div     <- list()
+  out_het     <- list()
+  # Transpose once — work column-major over windows
+  tot_T <- t(n_total_mat)
+  pha_T <- t(n_phased_het_mat)
+  ahe_T <- t(n_all_het_mat)
   for (K in scales) {
-    label <- paste0("s", K)
-    message("[GH_A]   Rolling mean: scale=", K, " windows (~", round(K * 5, 0), " kb)")
+    lab <- paste0("s", K)
+    K_eff <- min(K, n_win)
+    # frollsum: center-aligned, fill with NA at edges
+    roll_tot <- vapply(seq_len(n_samp),
+      function(s) frollsum(tot_T[, s], n = K_eff, align = "center", na.rm = TRUE),
+      numeric(n_win))
+    roll_pha <- vapply(seq_len(n_samp),
+      function(s) frollsum(pha_T[, s], n = K_eff, align = "center", na.rm = TRUE),
+      numeric(n_win))
+    roll_ahe <- vapply(seq_len(n_samp),
+      function(s) frollsum(ahe_T[, s], n = K_eff, align = "center", na.rm = TRUE),
+      numeric(n_win))
+    # Each frollsum returns length-n_win; vapply stacks → (n_win × n_samp).
+    # Transpose back to (n_samp × n_win) for output.
+    out_total[[lab]]  <- t(roll_tot)
+    out_phased[[lab]] <- t(roll_pha)
+    out_allhet[[lab]] <- t(roll_ahe)
 
-    roll_mat <- matrix(NA_real_, nrow = n_samp, ncol = n_win,
-                       dimnames = dimnames(raw_mat))
-
-    for (si in seq_len(n_samp)) {
-      row_vals <- raw_mat[si, ]
-      # frollmean with align="center" for symmetric smoothing
-      smoothed <- frollmean(row_vals, n = K, align = "center", na.rm = TRUE)
-      roll_mat[si, ] <- smoothed
-    }
-
-    # Coverage check: how many cells went from NA to non-NA (rescue) or vice versa
-    n_raw_valid  <- sum(!is.na(raw_mat))
-    n_roll_valid <- sum(!is.na(roll_mat))
-    message("[GH_A]     Coverage: raw=", round(100 * n_raw_valid / length(raw_mat), 1),
-            "% → rolling=", round(100 * n_roll_valid / length(roll_mat), 1), "%")
-
-    rolling[[label]] <- roll_mat
+    # Ratios — NA when denominator < K_eff (incomplete window) or = 0
+    denom <- out_total[[lab]]
+    div_K <- matrix(NA_real_, n_samp, n_win)
+    het_K <- matrix(NA_real_, n_samp, n_win)
+    ok <- is.finite(denom) & denom > 0
+    div_K[ok] <- out_phased[[lab]][ok] / denom[ok]
+    het_K[ok] <- out_allhet[[lab]][ok] / denom[ok]
+    out_div[[lab]] <- div_K
+    out_het[[lab]] <- het_K
+    message(sprintf("[GH_A]   rolling s%d: median(n_tot per win)=%s, coverage=%.1f%%",
+                    K,
+                    formatC(median(denom[ok], na.rm = TRUE), big.mark = ",",
+                            format = "d"),
+                    100 * sum(ok) / length(denom)))
   }
-
-  rolling
+  list(n_total = out_total, n_phased_het = out_phased, n_all_het = out_allhet,
+       div = out_div, het = out_het)
 }
 
 # =============================================================================
-# MAIN LOOP
+# Main loop
 # =============================================================================
+sample_to_row <- setNames(seq_along(sample_names), sample_names)
 
 for (chr in chroms) {
-  # Chat 14: load THIS chrom's precomp on demand (was: eager precomp_list)
-  pc <- readRDS(precomp_index[[chr]])
-  if (is.null(pc) || pc$n_windows < 20) {
-    message("[GH_A] SKIP ", chr, ": only ", pc$n_windows %||% 0, " windows")
-    rm(pc); invisible(gc(verbose = FALSE, full = FALSE))
-    next
+  t_chr <- proc.time()
+  message("\n[GH_A] ===== ", chr, " =====")
+
+  pc_file <- precomp_files[[chr]]
+  pc <- readRDS(pc_file)
+  if (is.null(pc) || is.null(pc$dt) || nrow(pc$dt) < 20L) {
+    message("[GH_A] ", chr, ": precomp has <20 windows — skip"); next
   }
+  win_grid <- pc$dt[, .(window_idx, start_bp, end_bp)]
+  setorder(win_grid, start_bp)
+  rm(pc); invisible(gc(verbose = FALSE))
+  n_win <- nrow(win_grid)
+  message("[GH_A] ", chr, ": ", n_win, " windows")
 
-  dt <- pc$dt
-  n_win <- nrow(dt)
-  message("\n================================================================")
-  message("[GH_A] ======= ", chr, " (", n_win, " windows) =======")
-  message("================================================================")
-
-  # ── Load + pre-index ──
-  ghsl_file <- file.path(ghsl_prep_dir, paste0(chr, ".merged_phased_snps.tsv.gz"))
+  ghsl_file <- file.path(GHSL_PREP_DIR, paste0(chr, ".merged_phased_snps.tsv.gz"))
   if (!file.exists(ghsl_file)) {
-    message("[GH_A] SKIP ", chr, ": no merged phased SNPs file")
-    next
+    message("[GH_A] ", chr, ": no ", basename(ghsl_file), " — skip"); next
   }
 
   t0 <- proc.time()
-  message("[GH_A] Loading ", basename(ghsl_file), " ...")
   ghsl_dt <- fread(ghsl_file)
-  message("[GH_A]   Raw: ", formatC(nrow(ghsl_dt), big.mark = ","), " variants in ",
-          round((proc.time() - t0)[3], 1), "s")
+  message(sprintf("[GH_A] %s: read %s rows in %.1fs",
+                  chr,
+                  formatC(nrow(ghsl_dt), big.mark = ","),
+                  (proc.time() - t0)[3]))
 
-  # QC filter
+  # QC filter (only on columns that exist in this file)
   if ("qual" %in% names(ghsl_dt)) ghsl_dt <- ghsl_dt[is.na(qual) | qual >= QUAL_MIN]
-  if ("gq" %in% names(ghsl_dt)) ghsl_dt <- ghsl_dt[is.na(gq) | gq >= GQ_MIN]
-  message("[GH_A]   After QC: ", formatC(nrow(ghsl_dt), big.mark = ","))
+  if ("gq"   %in% names(ghsl_dt)) ghsl_dt <- ghsl_dt[is.na(gq)   | gq   >= GQ_MIN]
 
-  available_samples <- intersect(unique(ghsl_dt$sample_id), sample_names)
-  message("[GH_A]   Samples: ", length(available_samples), " / ", n_samples)
-
-  if (length(available_samples) < 20) {
-    message("[GH_A] SKIP ", chr, ": only ", length(available_samples), " samples with data")
-    next
-  }
-
-  # Pre-index by window
-  message("[GH_A]   Pre-indexing...")
-  t_idx <- proc.time()
-  ghsl_dt <- ghsl_dt[sample_id %in% available_samples]
-  window_starts <- dt$start_bp
-  window_ends   <- dt$end_bp
-  ghsl_dt[, window_id := findInterval(pos, window_starts)]
-  ghsl_dt[window_id > n_win, window_id := n_win]
-  ghsl_dt[window_id < 1, window_id := 1L]
-  ghsl_dt <- ghsl_dt[pos <= window_ends[window_id]]
-
-  ghsl_by_window <- split(ghsl_dt, ghsl_dt$window_id)
-  message("[GH_A]   Indexed: ", formatC(nrow(ghsl_dt), big.mark = ","),
-          " variants in ", round((proc.time() - t_idx)[3], 1), "s")
-
-  # ── STAGE 1: Raw divergence matrix ──
-  message("[GH_A] Stage 1: Computing raw divergence matrix...")
+  # Aggregate
   t1 <- proc.time()
-  div_result <- compute_divergence_matrix(ghsl_by_window, dt, n_win, available_samples)
-  elapsed1 <- round((proc.time() - t1)[3], 1)
+  agg <- compute_divergence_matrices(ghsl_dt, win_grid, n_samp, sample_to_row,
+                                     MIN_TOTAL)
+  message(sprintf("[GH_A] %s: divergence matrices (%d × %d) %.1fs",
+                  chr, n_samp, n_win, (proc.time() - t1)[3]))
+  rm(ghsl_dt); invisible(gc(verbose = FALSE))
 
-  div_mat <- div_result$ghsl
-  het_mat <- div_result$het
-
-  n_scored <- sum(!is.na(div_mat))
-  n_possible <- length(available_samples) * n_win
-  message("[GH_A]   Raw divergence: ", formatC(n_scored, big.mark = ","),
-          " / ", formatC(n_possible, big.mark = ","),
-          " (", round(100 * n_scored / n_possible, 1), "%) in ", elapsed1, "s")
-
-  # Quick stats
-  ghsl_vals <- div_mat[!is.na(div_mat)]
-  if (length(ghsl_vals) > 0) {
-    message("[GH_A]   GHSL: min=", round(min(ghsl_vals), 4),
-            " median=", round(median(ghsl_vals), 4),
-            " max=", round(max(ghsl_vals), 4))
+  div_vals <- agg$div_mat[is.finite(agg$div_mat)]
+  if (length(div_vals) > 0L) {
+    message(sprintf("[GH_A] %s: div  min=%.4f med=%.4f max=%.4f n_scored=%s",
+                    chr, min(div_vals), median(div_vals), max(div_vals),
+                    formatC(length(div_vals), big.mark = ",")))
   }
 
-  # ── STAGE 2: Rolling aggregation ──
-  message("[GH_A] Stage 2: Rolling aggregation...")
+  # Rolling (ratio of sums)
   t2 <- proc.time()
-  rolling_div <- compute_rolling_matrices(div_mat, ROLLING_SCALES)
-  rolling_het <- compute_rolling_matrices(het_mat, ROLLING_SCALES)
-  elapsed2 <- round((proc.time() - t2)[3], 1)
-  message("[GH_A]   Rolling computed in ", elapsed2, "s")
+  roll <- compute_rolling(agg$n_total_mat, agg$n_phased_het_mat,
+                          agg$n_all_het_mat, SCALES)
+  message(sprintf("[GH_A] %s: rolling at %d scales %.1fs",
+                  chr, length(SCALES), (proc.time() - t2)[3]))
 
-  # ── STAGE 3: Save RDS ──
-  message("[GH_A] Stage 3: Saving matrices...")
-
-  window_info <- dt[, .(global_window_id, start_bp, end_bp)]
-  window_info[, pos_mb := round((start_bp + end_bp) / 2e6, 4)]
-
-  out_rds <- file.path(outdir, paste0(chr, ".ghsl_matrices.rds"))
-  saveRDS(list(
-    div_mat          = div_mat,
-    het_mat          = het_mat,
-    n_sites_mat      = div_result$n_sites,
-    n_phased_het_mat = div_result$n_phased_het,
-    rolling          = rolling_div,
-    rolling_het      = rolling_het,
-    window_info      = window_info,
-    sample_names     = available_samples,
-    chrom            = chr,
-    params           = list(
-      min_phased_sites = MIN_PHASED_SITES,
-      qual_min         = QUAL_MIN,
-      gq_min           = GQ_MIN,
-      rolling_scales   = ROLLING_SCALES
+  # Save
+  window_info <- data.table(
+    window_idx = win_grid$window_idx,
+    start_bp   = win_grid$start_bp,
+    end_bp     = win_grid$end_bp,
+    mid_bp     = as.integer((win_grid$start_bp + win_grid$end_bp) / 2L)
+  )
+  out <- list(
+    div_mat              = agg$div_mat,
+    het_mat              = agg$het_mat,
+    n_total_mat          = agg$n_total_mat,
+    n_phased_het_mat     = agg$n_phased_het_mat,
+    n_all_het_mat        = agg$n_all_het_mat,
+    rolling              = roll$div,
+    rolling_het          = roll$het,
+    rolling_n_total      = roll$n_total,
+    rolling_n_phased_het = roll$n_phased_het,
+    rolling_n_all_het    = roll$n_all_het,
+    window_info          = window_info,
+    sample_names         = sample_names,
+    chrom                = chr,
+    params               = list(
+      scales    = SCALES,
+      min_total = MIN_TOTAL,
+      qual_min  = QUAL_MIN,
+      gq_min    = GQ_MIN,
+      schema    = "GH_A v2 (ratio-of-sums rolling)"
     )
-  ), out_rds)
-
-  fsize <- round(file.info(out_rds)$size / 1e6, 1)
-  message("[GH_A]   Saved: ", out_rds, " (", fsize, " MB)")
-
-  # Free memory (chat 14: include pc from on-demand readRDS)
-  rm(ghsl_dt, ghsl_by_window, div_result, pc, dt)
-  gc(verbose = FALSE)
-
-  message("[GH_A] ", chr, " DONE in ", round((proc.time() - t0)[3], 1), "s total")
+  )
+  out_file <- file.path(OUTDIR, paste0(chr, ".ghsl_matrices.rds"))
+  saveRDS(out, out_file)
+  message(sprintf("[GH_A] %s: wrote %s (%.1f MB) in %.1fs total",
+                  chr, out_file,
+                  file.info(out_file)$size / 1e6,
+                  (proc.time() - t_chr)[3]))
+  rm(agg, roll, out); invisible(gc(verbose = FALSE))
 }
 
-message("\n================================================================")
-message("[DONE] GHSL stage A: Heavy engine complete")
-message("================================================================")
-message("  Output: ", outdir, "/")
-message("  Files:  <chr>.ghsl_matrices.rds")
-message("")
-message("  Next: run STEP_GH_B_classify.R on these RDS files")
-message("  That script loads in seconds — iterate on scoring/classification there.")
+message("[GH_A] DONE")
