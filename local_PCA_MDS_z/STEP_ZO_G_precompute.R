@@ -195,10 +195,44 @@ compute_dosage_het_rates <- function(dosage_dir, per_chr, chroms) {
       next
     }
 
+    # Dosage matrix here is `marker Ind0 Ind1 ...` with no position column;
+    # coordinates live in the matching `<chrom>.sites.tsv.gz`. Try sites join,
+    # then fall back to parsing the trailing integer of the marker name.
     pos_col <- intersect(c("POS", "pos", "position"), names(dos))
-    if (length(pos_col) == 0) { message("  [dosage] ", chr, ": no POS column"); next }
+    if (length(pos_col) == 0) {
+      sites_file <- file.path(dosage_dir, paste0(chr, ".sites.tsv.gz"))
+      if (!file.exists(sites_file)) sites_file <- file.path(dosage_dir, paste0(chr, ".sites.tsv"))
+
+      if (file.exists(sites_file) && "marker" %in% names(dos)) {
+        sites <- tryCatch(fread(sites_file, nThread = 4L), error = function(e) NULL)
+        sites_pos <- if (!is.null(sites)) intersect(c("POS", "pos", "position"), names(sites)) else character()
+        if (!is.null(sites) && "marker" %in% names(sites) && length(sites_pos) > 0) {
+          dos <- merge(sites[, c("marker", sites_pos[1]), with = FALSE],
+                       dos, by = "marker", all.y = TRUE)
+          setnames(dos, sites_pos[1], "POS")
+          pos_col <- "POS"
+          message("  [dosage] ", chr, ": POS joined from sites file")
+        }
+      }
+
+      if (length(pos_col) == 0 && "marker" %in% names(dos)) {
+        dos[, POS := suppressWarnings(as.integer(sub("^.*_", "", marker)))]
+        if (any(is.finite(dos$POS))) {
+          pos_col <- "POS"
+          message("  [dosage] ", chr, ": POS parsed from marker")
+        } else {
+          dos[, POS := NULL]
+        }
+      }
+
+      if (length(pos_col) == 0) {
+        message("  [dosage] ", chr, ": no POS column and no usable marker/sites source")
+        next
+      }
+    }
     positions <- dos[[pos_col[1]]]
-    dos_mat <- as.matrix(dos[, !..pos_col[1]])
+    meta_cols <- intersect(c(pos_col[1], "marker", "chrom", "allele1", "allele2"), names(dos))
+    dos_mat <- as.matrix(dos[, !..meta_cols])
 
     message("  [dosage] ", chr, ": ", nrow(dos_mat), " sites x ", ncol(dos_mat), " samples")
 
