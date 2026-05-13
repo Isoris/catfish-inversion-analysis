@@ -141,16 +141,6 @@ if (!is.null(sample_names)) {
 
 `%||%` <- function(a, b) if (is.null(a) || length(a) == 0) b else a
 
-make_sim_mat <- function(dmat) {
-  finite_vals <- dmat[is.finite(dmat)]
-  dmax <- if (length(finite_vals) > 0) quantile(finite_vals, 0.95, na.rm = TRUE) else 1
-  if (!is.finite(dmax) || dmax == 0) dmax <- 1
-  sim <- 1 - pmin(dmat / dmax, 1)
-  sim[!is.finite(sim)] <- 0
-  diag(sim) <- 1
-  sim
-}
-
 
 
 # =============================================================================
@@ -195,15 +185,14 @@ precompute_one_chr <- function(chr) {
     }
   }
 
+  # Vectorized max_abs_z + max_z_axis (much faster than apply(.SD, 1, ...))
   z_cols <- grep("^MDS[0-9]+_z$", names(dt), value = TRUE)
   if (length(z_cols) > SEED_MDS_AXES) z_cols <- z_cols[seq_len(SEED_MDS_AXES)]
   if (length(z_cols) > 0) {
-    dt[, max_abs_z := apply(.SD, 1, function(x) max(abs(x), na.rm = TRUE)), .SDcols = z_cols]
-    # Which axis dominated? Useful for the JSON exporter and atlas pages.
-    dt[, max_z_axis := apply(.SD, 1, function(x) {
-      ax <- which.max(abs(x))
-      if (length(ax) == 0) NA_integer_ else as.integer(ax)
-    }), .SDcols = z_cols]
+    zmat <- abs(as.matrix(dt[, ..z_cols]))
+    zmat[!is.finite(zmat)] <- 0
+    dt[, max_abs_z := do.call(pmax, c(as.data.frame(zmat), list(na.rm = TRUE)))]
+    dt[, max_z_axis := max.col(zmat, ties.method = "first")]
   } else {
     dt[, max_abs_z := 0]
     dt[, max_z_axis := NA_integer_]
@@ -217,19 +206,35 @@ precompute_one_chr <- function(chr) {
     mds_mat <- mds_mat[seq_len(n), , drop = FALSE]
   }
 
-  # Similarity matrix
-  sim_mat <- make_sim_mat(dmat)
-  n_w <- nrow(dt)
+  # ── One-time per-chrom precomputations ─────────────────────────────────
+  # Cache the 95th-percentile distance (used by the similarity transform) and
+  # the per-window sort order of dmat (used by seed_nn_dist + every NN scale,
+  # was previously re-sorted 8x).
+  finite_d <- dmat[is.finite(dmat)]
+  dmax <- if (length(finite_d) > 0L) quantile(finite_d, 0.95, na.rm = TRUE) else 1
+  if (!is.finite(dmax) || dmax == 0) dmax <- 1
+  rm(finite_d)
 
-  # Seed NN distances
-  nn_dists <- vapply(seq_len(nrow(dmat)), function(i) {
-    d <- dmat[i, ]; d[i] <- Inf; d <- d[is.finite(d)]
-    if (length(d) == 0) return(Inf)
-    mean(sort(d)[seq_len(min(SEED_NEIGHBOR_K, length(d)))], na.rm = TRUE)
+  n_w <- nrow(dmat)
+  # sorted_idx[i, ] = indices of windows ranked by ascending dmat[i, ].
+  # Computed once; reused for seed_nn_dist and every NN-smoothing scale.
+  sorted_idx <- matrix(NA_integer_, nrow = n_w, ncol = n_w)
+  for (i in seq_len(n_w)) {
+    d <- dmat[i, ]; d[i] <- Inf
+    sorted_idx[i, ] <- order(d)
+  }
+
+  # Base similarity matrix (uses cached dmax).
+  sim_mat <- 1 - pmin(dmat / dmax, 1)
+  sim_mat[!is.finite(sim_mat)] <- 0
+  diag(sim_mat) <- 1
+
+  # Seed NN distances (use cached sorted_idx; mean of top SEED_NEIGHBOR_K).
+  K_SEED <- min(SEED_NEIGHBOR_K, n_w - 1L)
+  nn_dists <- vapply(seq_len(n_w), function(i) {
+    mean(dmat[i, sorted_idx[i, seq_len(K_SEED)]], na.rm = TRUE)
   }, numeric(1))
-  dmax_nn <- quantile(dmat[is.finite(dmat)], 0.95, na.rm = TRUE)
-  if (!is.finite(dmax_nn) || dmax_nn == 0) dmax_nn <- 1
-  dt[, seed_nn_dist := nn_dists / dmax_nn]
+  dt[, seed_nn_dist := nn_dists / dmax]
 
   # ── Save precomp RDS ──
   precomp <- list(
@@ -239,17 +244,18 @@ precompute_one_chr <- function(chr) {
   rds_out <- file.path(precomp_dir, paste0(chr, ".precomp.rds"))
   saveRDS(precomp, rds_out)
 
-  # ── NN-smoothed sim_mats at multiple scales ──
-  # MDS-space k-nearest-neighbor smoothing. nn_birth (the coarsest scale at
-  # which a block first appears) is the persistence indicator used by D02/D09.
+  # ── NN-smoothed sim_mats at multiple scales ────────────────────────────
+  # nn0 is the unsmoothed base sim_mat (same as $sim_mat inside precomp.rds,
+  # written here under the conventional name). nn{40,80,160,320} are the
+  # scales L1 / L2 / atlas consume. Earlier defaults also wrote nn{20,120,
+  # 200,240} which had zero readers. Override via NN_SIM_SCALES env var.
   sim_dir <- file.path(precomp_dir, "sim_mats")
   dir.create(sim_dir, recursive = TRUE, showWarnings = FALSE)
   saveRDS(sim_mat, file.path(sim_dir, paste0(chr, ".sim_mat_nn0.rds")))
   message("[PRECOMP] ", chr, ": saved sim_mat_nn0")
 
   nn_sim_scales <- as.integer(strsplit(
-    Sys.getenv("NN_SIM_SCALES",
-               "20,40,80,120,160,200,240,320"), ",")[[1]])
+    Sys.getenv("NN_SIM_SCALES", "40,80,160,320"), ",")[[1]])
   nn_sim_scales <- nn_sim_scales[nn_sim_scales > 0 & is.finite(nn_sim_scales)]
 
   mds_cols_nn <- grep("^MDS[0-9]+$", names(dt), value = TRUE)
@@ -264,15 +270,33 @@ precompute_one_chr <- function(chr) {
         next
       }
       t_nn <- proc.time()
+
+      # Smooth MDS coords by averaging each window with its top-k neighbors
+      # (neighbors picked by cached sorted_idx; no per-scale resort).
       smoothed <- matrix(0, nrow = n_mds, ncol = ncol(mds_mat_nn))
       for (wi in seq_len(n_mds)) {
-        d <- dmat[wi, ]; d[wi] <- Inf
-        nn_idx <- order(d)[seq_len(k_use)]
+        nn_idx <- sorted_idx[wi, seq_len(k_use)]
         smoothed[wi, ] <- colMeans(
           mds_mat_nn[c(wi, nn_idx), , drop = FALSE], na.rm = TRUE)
       }
-      nn_dmat <- as.matrix(dist(smoothed))
-      nn_sim <- make_sim_mat(nn_dmat)
+
+      # Pairwise Euclidean distance via tcrossprod (BLAS) instead of
+      # dist() + as.matrix(): D^2[i,j] = ||s_i||^2 + ||s_j||^2 - 2*<s_i,s_j>.
+      # Much faster for moderate N (~5-10x for N=6000, K_MDS=5).
+      sq_norms <- rowSums(smoothed * smoothed)
+      nn_dsq <- outer(sq_norms, sq_norms, "+") - 2 * tcrossprod(smoothed)
+      nn_dsq[nn_dsq < 0] <- 0
+      nn_dmat <- sqrt(nn_dsq)
+
+      # Similarity transform: linear rescaling against this scale's own 95th
+      # percentile (matches the upstream sim_mat formula).
+      nn_dmax <- quantile(nn_dmat[is.finite(nn_dmat) & nn_dmat > 0], 0.95,
+                          na.rm = TRUE)
+      if (!is.finite(nn_dmax) || nn_dmax == 0) nn_dmax <- 1
+      nn_sim <- 1 - pmin(nn_dmat / nn_dmax, 1)
+      nn_sim[!is.finite(nn_sim)] <- 0
+      diag(nn_sim) <- 1
+
       saveRDS(nn_sim,
               file.path(sim_dir, paste0(chr, ".sim_mat_nn", k, ".rds")))
       elapsed_nn <- round((proc.time() - t_nn)[3], 1)
