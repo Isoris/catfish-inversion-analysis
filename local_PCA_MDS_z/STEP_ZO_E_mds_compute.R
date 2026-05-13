@@ -67,18 +67,21 @@ NPC        <- 4L           # v9.4: default raised from 2L → 4L to match
                            # NPC=4 silently used only half the available
                            # signal and produced different distances than
                            # the legacy STEP_B01 monolithic (which was 4).
-MDS_DIMS   <- 2L           # 2026-05-13: reduced from 20L to 2L. Only the 2D
-                           # scatter is consumed downstream (atlas plots);
-                           # sim_mat is built directly from dmat_focal (see
-                           # ZO_G:730), not from MDS coords, so higher dims
-                           # contribute nothing to L1/L2 calls. Truncating
-                           # cmdscale at k=2 saves the bulk of MDS cost.
+MDS_DIMS   <- 5L           # 2026-05-13: reduced from 20L to 5L (matches
+                           # K_MDS in TR_C and GH_C). The base sim_mat is
+                           # built directly from dmat_focal (ZO_G), not from
+                           # MDS coords, so higher dims contribute nothing
+                           # to L1/L2 calls. NN-smoothed sim_mats average
+                           # MDS coords across neighbours -> K=5 captures
+                           # top variance with margin.
+                           #
+                           # Yeah if u so homeless u can K=2 to try, but here
+                           # we don't have time to test. K=5 is the safe
+                           # default; flip via --mds_dims 2 if you really
+                           # want to experiment.
 Z_THRESH   <- 3.0          # legacy; Z #1 (per-axis MDS-Z) is descriptive
                            # only and not consumed by L1/L2. Kept for atlas
-                           # Z-profile plots and methods-section comparability.
-FDR_Q      <- 0.05         # 2026-05-13: BH-FDR block below is commented out
-                           # (legacy lostruct-style reporting; not consumed
-                           # downstream).
+                           # Z-profile plots.
 SEED       <- 42L
 
 i <- 1L
@@ -100,8 +103,6 @@ while (i <= length(args)) {
     MDS_DIMS <- as.integer(args[i + 1]); i <- i + 2L
   } else if (a == "--z_thresh" && i < length(args)) {
     Z_THRESH <- as.numeric(args[i + 1]); i <- i + 2L
-  } else if (a == "--fdr_q" && i < length(args)) {
-    FDR_Q <- as.numeric(args[i + 1]); i <- i + 2L
   } else if (a == "--seed" && i < length(args)) {
     SEED <- as.integer(args[i + 1]); i <- i + 2L
   } else {
@@ -141,7 +142,7 @@ if (file.exists(rds_out)) {
 }
 
 message("[STEP10v2-S1] ═══════ ", FOCAL_CHR, " (mode=", MDS_MODE, ") ═══════")
-message("[STEP10v2-S1] nPC=", NPC, " mds_dims=", MDS_DIMS, " z_thresh=", Z_THRESH, " fdr_q=", FDR_Q)
+message("[STEP10v2-S1] nPC=", NPC, " mds_dims=", MDS_DIMS, " z_thresh=", Z_THRESH)
 if (CHUNK_K > 0) message("[STEP10v2-S1] Chunk multiplier: ", CHUNK_K, "x, seed=", SEED)
 
 # =============================================================================
@@ -207,7 +208,7 @@ dist_sq_from_pcs <- function(values1, vectors1, values2, vectors2) {
   sum(values1^2) + sum(values2^2) - 2 * cross
 }
 
-pc_dist_from_step09 <- function(pca_df, sample_names, npc, normalize = "L1",
+pc_dist <- function(pca_df, sample_names, npc, normalize = "L1",
                                 progress_fn = NULL) {
   values <- as.matrix(pca_df[, paste0("lam_", seq_len(npc)), drop = FALSE])
   vec_cols <- unlist(lapply(seq_len(npc), function(pc) paste0("PC_", pc, "_", sample_names)))
@@ -384,7 +385,7 @@ message("[STEP10v2-S1] Computing distance matrix: ", n_total, " windows (",
 
 pb_dist <- make_progress(n_pairs, "dist")
 
-dmat <- pc_dist_from_step09(
+dmat <- pc_dist(
   as.data.frame(dt_combined),
   sample_names_ref,
   npc = NPC,
@@ -480,23 +481,6 @@ for (ax in seq_len(ncol(mds$points))) {
   }
 
   mds_focal[[paste0("MDS", ax, "_outlier")]] <- abs(mds_focal[[zcol]]) >= Z_THRESH
-
-  # ──────────────────────────────────────────────────────────────────────
-  # BH-FDR sibling flag (Faria et al. 2025 style). DISABLED 2026-05-13.
-  # Z #1 (per-axis MDS-Z) is not consumed by L1/L2 stripe detection — it
-  # was the lostruct outlier-and-merge nominator. The L1 boundary scan
-  # uses its own diagonal-distance Z (Z #2) computed inside ZO_H from
-  # sim_mat, which is a completely separate normalization. We keep the
-  # block here for easy re-enabling if you want to report 5% FDR window
-  # outliers in a methods comparison panel; otherwise it's dead weight.
-  # ──────────────────────────────────────────────────────────────────────
-  if (FALSE) {
-    zv <- mds_focal[[zcol]]
-    pv <- 2 * pnorm(-abs(zv))
-    qv <- p.adjust(pv, method = "BH")
-    mds_focal[[paste0("MDS", ax, "_q")]] <- qv
-    mds_focal[[paste0("MDS", ax, "_outlier_fdr")]] <- is.finite(qv) & qv <= FDR_Q
-  }
 }
 
 setkey(mds_focal, global_window_id)
@@ -508,7 +492,6 @@ mds_mat_focal <- as.matrix(mds_focal[, ..mds_cols])
 
 elapsed <- round(proc.time()[3] - t0, 1)
 n_outlier <- if ("MDS1_outlier" %in% names(out_chr)) sum(out_chr$MDS1_outlier, na.rm = TRUE) else 0L
-n_outlier_fdr <- 0L  # BH-FDR block disabled (see line ~470)
 
 # =============================================================================
 # WRITE PER-CHR RESULT
@@ -534,7 +517,6 @@ meta_row <- data.table(
   random_seed          = SEED,
   mds_dims             = MDS_DIMS,
   z_thresh             = Z_THRESH,
-  fdr_q                = FDR_Q,
   elapsed_sec          = elapsed,
   timestamp            = format(Sys.time(), "%Y-%m-%d %H:%M:%S")
 )
@@ -546,7 +528,7 @@ if (CHUNK_K > 0 && length(background_ids) > 0) {
 }
 
 message("")
-message("[DONE] STEP10v2 Stage 1 — ", FOCAL_CHR, ": ", nrow(out_chr),
+message("[DONE] ZO_E — ", FOCAL_CHR, ": ", nrow(out_chr),
         " focal windows, ", n_outlier, " z-outliers (|z|>=", Z_THRESH, "), ",
-        n_outlier_fdr, " BH-FDR outliers (q<=", FDR_Q, " on MDS1), ", elapsed, "s")
+        elapsed, "s")
 message("  ", rds_out)

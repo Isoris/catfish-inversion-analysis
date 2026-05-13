@@ -40,13 +40,6 @@
 #   --z_thresh    <num>     |max_abs_z| threshold for "outlier" flag
 #                           (default 3.0; matches TR_C's downstream
 #                           expectation)
-#   --fdr_q       <num>     BH-FDR target (default 0.05; Faria et al. 2025
-#                           style). Emits sibling columns is_outlier_fdr
-#                           and q_min computed per chrom from a two-sided
-#                           normal p on max_abs_z, then p.adjust(BH).
-#                           Candidate clustering still uses is_outlier
-#                           (legacy z threshold) — the FDR flag is reporting
-#                           only.
 #   --patch_rds   <bool>    if "true" (default), rewrites each
 #                           <chr>.precomp.rds with global_window_id
 #                           added to dt; if "false", leaves RDS untouched
@@ -81,7 +74,6 @@ OUTDIR      <- NA_character_
 GAP_BP      <- 500000L
 MIN_WINDOWS <- 3L
 Z_THRESH    <- 3.0
-FDR_Q       <- 0.05
 PATCH_RDS   <- TRUE
 
 args <- commandArgs(trailingOnly = TRUE)
@@ -93,7 +85,7 @@ while (i <= length(args)) {
   else if (a == "--gap_bp"      && i < length(args)) { GAP_BP      <- as.integer(args[i + 1]); i <- i + 2L }
   else if (a == "--min_windows" && i < length(args)) { MIN_WINDOWS <- as.integer(args[i + 1]); i <- i + 2L }
   else if (a == "--z_thresh"    && i < length(args)) { Z_THRESH    <- as.numeric(args[i + 1]); i <- i + 2L }
-  else if (a == "--fdr_q"       && i < length(args)) { FDR_Q       <- as.numeric(args[i + 1]); i <- i + 2L }
+  else if (a == "--fdr_q"       && i < length(args)) { i <- i + 2L }  # legacy no-op
   else if (a == "--patch_rds"   && i < length(args)) { PATCH_RDS   <- tolower(args[i + 1]) %in% c("true", "1", "yes"); i <- i + 2L }
   else { i <- i + 1L }
 }
@@ -106,8 +98,8 @@ precomp_files <- sort(list.files(PRECOMP_DIR, pattern = "\\.precomp\\.rds$",
 if (length(precomp_files) == 0L) stop("[TR_D] no .precomp.rds in ", PRECOMP_DIR)
 
 message(sprintf("[TR_D] precomp_dir=%s outdir=%s", PRECOMP_DIR, OUTDIR))
-message(sprintf("[TR_D] gap_bp=%d min_windows=%d z_thresh=%.2f fdr_q=%.3f patch_rds=%s",
-                GAP_BP, MIN_WINDOWS, Z_THRESH, FDR_Q, as.character(PATCH_RDS)))
+message(sprintf("[TR_D] z_thresh=%.2f patch_rds=%s",
+                Z_THRESH, as.character(PATCH_RDS)))
 message("[TR_D] found ", length(precomp_files), " precomp files")
 
 # =============================================================================
@@ -133,20 +125,6 @@ for (f in precomp_files) {
   if (n == 0L) { rm(pc); next }
   ids <- seq.int(global_id + 1L, global_id + n)
   global_id <- global_id + n
-
-  # ──────────────────────────────────────────────────────────────────────
-  # BH-FDR sibling flag DISABLED 2026-05-13. The is_outlier* columns and
-  # the candidate-region clustering below are not consumed by L1/L2 stripe
-  # detection (which reads sim_mat directly). Kept as if(FALSE) for easy
-  # re-enabling for methods-comparison panels.
-  # ──────────────────────────────────────────────────────────────────────
-  qv <- rep(NA_real_, n)
-  if (FALSE) {
-    zv <- dt$max_abs_z
-    pv <- 2 * pnorm(-abs(zv))
-    finite_p <- is.finite(pv)
-    if (any(finite_p)) qv[finite_p] <- p.adjust(pv[finite_p], method = "BH")
-  }
 
   reg <- data.table(
     global_window_id = ids,
