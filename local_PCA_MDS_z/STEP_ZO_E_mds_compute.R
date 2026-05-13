@@ -1,39 +1,34 @@
 #!/usr/bin/env Rscript
 
 # =============================================================================
-# 02a_mds_compute.R
+# STEP_ZO_E_mds_compute.R
 #
-# STAGE 1 (compute) — per-focal-chromosome MDS on lostruct distances. One
-# SLURM array task PER FOCAL CHROMOSOME. Each task loads ALL per-chr
-# .window_pca.rds (needed for chunked background sampling), computes the
-# lostruct distance matrix on focal+background windows, runs cmdscale, and
-# extracts only the focal chromosome's coordinates. Heaviest step in the
-# pipeline (~12 h walltime per chromosome).
+# Per-focal-chromosome MDS on lostruct distances. One SLURM array task per
+# chromosome (~4 min/chrom on Lanta under chromosome mode; the chunked_2x
+# mode that produced ~12 h walltimes has been removed). Each task:
+#   1. loads its focal chrom's per-window PCA fingerprints,
+#   2. computes the lostruct distance matrix `dmat` (focal x focal),
+#   3. runs `cmdscale(k = MDS_DIMS)` on dmat,
+#   4. computes robust per-axis z scores on the focal MDS coords,
+#   5. writes the per-chrom result to <outdir>/tmp/<chr>.mds_perchr.rds.
 #
 # Pipeline position:
-#   01c local_pca_merge  -> 02a MDS_COMPUTE  -> 02b mds_merge  -> 03 precompute
+#   ZO_C/D (per-window PCA + global IDs)  ->  ZO_E (this script)
+#       ->  ZO_G (precomp + sim_mats, reads tmp/ directly)
+#       ->  ZO_H / ZO_J (L1 / L2 stripe detection on sim_mat)
 #
-# ── Inputs ────────────────────────────────────────────────────────────────
-#   --rds_dir    <dir>   directory of <chr>.window_pca.rds from step 01c
+# Inputs:
+#   --rds_dir    <dir>   directory of <chr>.window_pca.rds from ZO_C/D
 #   --outdir     <dir>   output root; this stage writes to <outdir>/tmp/
 #   --outprefix  <s>     filename stem (default 'inversion_localpca')
 #   --focal_chr  <name>  chromosome under analysis for this array task
-#   [--mds_mode  chunked_2x]
-#                        chromosome | global | chunked_2x | chunked_3x | chunked_4x
-#                        chunked_Nx samples N x focal-window-count of background
-#                        from non-focal chroms, EXCLUDING high-inv_likeness windows
-#                        (so other chroms' inversions don't leak into background).
-#   [--npc       4]      eigvec count per window (must match 01b!)
-#   [--mds_dims  20]     MDS dimensions
-#   [--z_thresh  3.0]    candidate z threshold (consumed downstream)
+#   [--npc        4]     eigvec count per window (must match ZO_C!)
+#   [--mds_dims   5]     MDS dimensions kept after cmdscale (see comment)
+#   [--z_thresh   3.0]   per-axis Z #1 threshold (descriptive only)
+#   [--mds_mode / --seed] legacy chunked-mode flags, silently ignored.
 #
-# ── Output (in <outdir>/tmp/) ─────────────────────────────────────────────
-#   <focal_chr>.mds_perchr.rds   focal-chr MDS coords + per-axis z scores +
-#                                background metadata + chunked-mode bg indices
-#
-# ── Codebase ──────────────────────────────────────────────────────────────
-#   inversion-popgen-toolkit v8.5 / consolidated layout v1.0
-#   (was: STEP10v2_stage1_perchr_mds.R v8.3-parallel)
+# Output (in <outdir>/tmp/):
+#   <focal_chr>.mds_perchr.rds   list($out_dt, $dmat, $mds, $n_focal)
 # =============================================================================
 
 suppressPackageStartupMessages({
@@ -50,17 +45,19 @@ rds_dir    <- NULL
 outdir     <- NULL
 outprefix  <- "inversion_localpca"
 FOCAL_CHR  <- NULL
-MDS_MODE   <- "chunked_2x"
-NPC        <- 4L           # v9.4: default raised from 2L → 4L to match
-                           # 2a_local_pca/STEP_A02|A03 default. The lostruct
-                           # distance uses top-NPC eigvals/vecs; running B01
-                           # at NPC=2 against A02/A03 windows computed at
-                           # NPC=4 silently used only half the available
-                           # signal and produced different distances than
-                           # the legacy STEP_B01 monolithic (which was 4).
-MDS_DIMS   <- 20L
-Z_THRESH   <- 3.0
-SEED       <- 42L
+NPC        <- 4L           # top-NPC eigvals/vecs per window for the lostruct
+                           # distance kernel. Must match the NPC used by the
+                           # per-window PCA upstream (ZO_C / STEP_A02|A03).
+MDS_DIMS   <- 5L           # Top-5 MDS axes. Base sim_mat is built directly
+                           # from dmat_focal in ZO_G (not from MDS coords),
+                           # so higher dims contribute nothing to L1/L2.
+                           # NN-smoothed sim_mats average MDS coords across
+                           # neighbours, so K=5 captures top variance with
+                           # margin. K=2 only if you got time to test the
+                           # eigenvalue spectrum per chrom; here we don't.
+Z_THRESH   <- 3.0          # legacy; Z #1 (per-axis MDS-Z) is descriptive
+                           # only and not consumed by L1/L2. Kept for atlas
+                           # Z-profile plots.
 
 i <- 1L
 while (i <= length(args)) {
@@ -73,36 +70,23 @@ while (i <= length(args)) {
     outprefix <- args[i + 1]; i <- i + 2L
   } else if (a == "--focal_chr" && i < length(args)) {
     FOCAL_CHR <- args[i + 1]; i <- i + 2L
-  } else if (a == "--mds_mode" && i < length(args)) {
-    MDS_MODE <- args[i + 1]; i <- i + 2L
   } else if (a == "--npc" && i < length(args)) {
     NPC <- as.integer(args[i + 1]); i <- i + 2L
   } else if (a == "--mds_dims" && i < length(args)) {
     MDS_DIMS <- as.integer(args[i + 1]); i <- i + 2L
   } else if (a == "--z_thresh" && i < length(args)) {
     Z_THRESH <- as.numeric(args[i + 1]); i <- i + 2L
-  } else if (a == "--seed" && i < length(args)) {
-    SEED <- as.integer(args[i + 1]); i <- i + 2L
+  } else if (a == "--mds_mode" || a == "--seed") {
+    # Legacy chunked-mode flags removed 2026-05-13; consume value and ignore.
+    i <- i + 2L
   } else {
     i <- i + 1L
   }
 }
 
 if (is.null(rds_dir) || is.null(outdir) || is.null(FOCAL_CHR)) {
-  stop("Usage: Rscript STEP10v2_stage1_perchr_mds.R --rds_dir <dir> --outdir <dir> --focal_chr <chr> ...")
+  stop("Usage: Rscript STEP_ZO_E_mds_compute.R --rds_dir <dir> --outdir <dir> --focal_chr <chr> ...")
 }
-
-valid_modes <- c("chromosome", "global", "chunked_2x", "chunked_3x", "chunked_4x")
-if (!(MDS_MODE %in% valid_modes)) {
-  stop("Invalid --mds_mode. Must be one of: ", paste(valid_modes, collapse = ", "))
-}
-
-CHUNK_K <- switch(MDS_MODE,
-  chunked_2x = 2L,
-  chunked_3x = 3L,
-  chunked_4x = 4L,
-  0L
-)
 
 tmpdir <- file.path(outdir, "tmp")
 dir.create(tmpdir, recursive = TRUE, showWarnings = FALSE)
@@ -114,14 +98,12 @@ dir.create(tmpdir, recursive = TRUE, showWarnings = FALSE)
 rds_out <- file.path(tmpdir, paste0(FOCAL_CHR, ".mds_perchr.rds"))
 
 if (file.exists(rds_out)) {
-  message("[STEP10v2-S1] ", FOCAL_CHR, ": output already exists, skipping")
+  message("[ZO_E] ", FOCAL_CHR, ": output already exists, skipping")
   message("  ", rds_out)
   quit(status = 0)
 }
 
-message("[STEP10v2-S1] ═══════ ", FOCAL_CHR, " (mode=", MDS_MODE, ") ═══════")
-message("[STEP10v2-S1] nPC=", NPC, " mds_dims=", MDS_DIMS, " z_thresh=", Z_THRESH)
-if (CHUNK_K > 0) message("[STEP10v2-S1] Chunk multiplier: ", CHUNK_K, "x, seed=", SEED)
+message("[ZO_E] ", FOCAL_CHR, ": nPC=", NPC, " mds_dims=", MDS_DIMS, " z_thresh=", Z_THRESH)
 
 # =============================================================================
 # PROGRESS BAR
@@ -186,7 +168,7 @@ dist_sq_from_pcs <- function(values1, vectors1, values2, vectors2) {
   sum(values1^2) + sum(values2^2) - 2 * cross
 }
 
-pc_dist_from_step09 <- function(pca_df, sample_names, npc, normalize = "L1",
+pc_dist <- function(pca_df, sample_names, npc, normalize = "L1",
                                 progress_fn = NULL) {
   values <- as.matrix(pca_df[, paste0("lam_", seq_len(npc)), drop = FALSE])
   vec_cols <- unlist(lapply(seq_len(npc), function(pc) paste0("PC_", pc, "_", sample_names)))
@@ -296,60 +278,10 @@ if (n_focal < 3) {
   quit(status = 0)
 }
 
-dt_focal <- merge(cd$meta, cd$pca, by = "global_window_id")
-background_ids <- integer(0)
+dt_focal    <- merge(cd$meta, cd$pca, by = "global_window_id")
+dt_combined <- dt_focal
 
-if (MDS_MODE == "chromosome") {
-  dt_combined <- dt_focal
-
-} else if (MDS_MODE == "global") {
-  all_dts <- lapply(chr_data, function(x) merge(x$meta, x$pca, by = "global_window_id"))
-  dt_combined <- rbindlist(all_dts, fill = TRUE)
-
-} else if (grepl("^chunked_", MDS_MODE)) {
-  other_chrs <- setdiff(names(chr_data), FOCAL_CHR)
-
-  if (length(other_chrs) == 0) {
-    dt_combined <- dt_focal
-  } else {
-    n_background_target <- CHUNK_K * n_focal
-    bg_list <- lapply(other_chrs, function(c) {
-      merge(chr_data[[c]]$meta, chr_data[[c]]$pca, by = "global_window_id")
-    })
-    bg_pool <- rbindlist(bg_list, fill = TRUE)
-
-    # ── SMART BACKGROUND FILTER ──────────────────────────────────────
-    # Exclude windows with high inversion-likeness from background pool.
-    # Without this, chunked_2x can accidentally sample other chromosomes'
-    # inversions as "background," making the focal inversions look normal.
-    # Uses PVE1 (proportion variance explained by PC1) as a fast proxy:
-    # windows where PC1 dominates (pve1 > 0.5) are likely inversion-like.
-    if ("lam_1" %in% names(bg_pool) && "lam_2" %in% names(bg_pool)) {
-      bg_pool[, bg_pve1 := lam_1 / (lam_1 + lam_2)]
-      n_before <- nrow(bg_pool)
-      bg_pool <- bg_pool[is.na(bg_pve1) | bg_pve1 < 0.50]
-      n_removed <- n_before - nrow(bg_pool)
-      if (n_removed > 0) {
-        message("[STEP10v2-S1] Background filter: removed ", n_removed,
-                " inv-like windows (pve1 >= 0.50) from ", n_before, " → ", nrow(bg_pool))
-      }
-      bg_pool[, bg_pve1 := NULL]
-    }
-
-    chr_seed <- SEED + match(FOCAL_CHR, names(chr_data))
-    set.seed(chr_seed)
-
-    n_sample <- min(n_background_target, nrow(bg_pool))
-    bg_idx <- sort(sample.int(nrow(bg_pool), n_sample))
-    bg_sampled <- bg_pool[bg_idx]
-    background_ids <- bg_sampled$global_window_id
-
-    dt_combined <- rbindlist(list(dt_focal, bg_sampled), fill = TRUE)
-  }
-}
-
-message("[STEP10v2-S1] ", FOCAL_CHR, ": ", n_focal, " focal + ",
-        length(background_ids), " background = ", nrow(dt_combined), " total windows")
+message("[ZO_E] ", FOCAL_CHR, ": ", n_focal, " focal windows")
 
 # =============================================================================
 # DISTANCE MATRIX
@@ -363,7 +295,7 @@ message("[STEP10v2-S1] Computing distance matrix: ", n_total, " windows (",
 
 pb_dist <- make_progress(n_pairs, "dist")
 
-dmat <- pc_dist_from_step09(
+dmat <- pc_dist(
   as.data.frame(dt_combined),
   sample_names_ref,
   npc = NPC,
@@ -439,10 +371,10 @@ for (ax in seq_len(ncol(mds$points))) {
   zcol <- paste0("MDS", ax, "_z")
 
   # ROBUST z-score: median / MAD instead of mean / SD.
-  # With chunked_2x, if an inversion occupies >30% of the chromosome,
-  # mean/SD normalization pulls toward the inversion signal and compresses
-  # z for everything. median/MAD is resistant to this because the inversion
-  # windows are outliers that don't move the median.
+  # If an inversion occupies a large fraction of the chromosome, mean/SD
+  # normalization pulls toward the inversion signal and compresses z for
+  # everything. median/MAD is resistant because the inversion windows are
+  # outliers that don't move the median.
   med <- median(vv, na.rm = TRUE)
   mad_val <- mad(vv, na.rm = TRUE)
 
@@ -476,36 +408,25 @@ n_outlier <- if ("MDS1_outlier" %in% names(out_chr)) sum(out_chr$MDS1_outlier, n
 # =============================================================================
 
 result <- list(
-  out_dt         = out_chr,
-  dmat           = dmat_focal,
-  mds            = list(points = mds_mat_focal, eig = mds$eig),
-  background_ids = background_ids,
-  n_background   = length(background_ids),
-  n_focal        = sum(focal_mask)
+  out_dt  = out_chr,
+  dmat    = dmat_focal,
+  mds     = list(points = mds_mat_focal, eig = mds$eig),
+  n_focal = sum(focal_mask)
 )
 saveRDS(result, rds_out)
 
 meta_row <- data.table(
-  run_id               = paste0(MDS_MODE, "_", FOCAL_CHR),
-  mds_mode             = MDS_MODE,
-  focal_chrom          = FOCAL_CHR,
-  n_focal_windows      = result$n_focal,
-  n_background_windows = result$n_background,
-  chunk_multiplier     = CHUNK_K,
-  random_seed          = SEED,
-  mds_dims             = MDS_DIMS,
-  z_thresh             = Z_THRESH,
-  elapsed_sec          = elapsed,
-  timestamp            = format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+  focal_chrom     = FOCAL_CHR,
+  n_focal_windows = result$n_focal,
+  mds_dims        = MDS_DIMS,
+  z_thresh        = Z_THRESH,
+  elapsed_sec     = elapsed,
+  timestamp       = format(Sys.time(), "%Y-%m-%d %H:%M:%S")
 )
 fwrite(meta_row, file.path(tmpdir, paste0(FOCAL_CHR, ".metadata.tsv")), sep = "\t")
 
-if (CHUNK_K > 0 && length(background_ids) > 0) {
-  writeLines(as.character(background_ids),
-             file.path(tmpdir, paste0(FOCAL_CHR, ".background_ids.txt")))
-}
-
 message("")
-message("[DONE] STEP10v2 Stage 1 — ", FOCAL_CHR, ": ", nrow(out_chr),
-        " focal windows, ", n_outlier, " outliers, ", elapsed, "s")
+message("[DONE] ZO_E — ", FOCAL_CHR, ": ", nrow(out_chr),
+        " focal windows, ", n_outlier, " z-outliers (|z|>=", Z_THRESH, "), ",
+        elapsed, "s")
 message("  ", rds_out)

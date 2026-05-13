@@ -41,7 +41,12 @@
 
 suppressPackageStartupMessages({ library(data.table) })
 
-K_MDS                <- 5L
+K_MDS                <- 5L  # Top-5 MDS axes for sim_mat NN-smoothing space.
+                             # sim_mat itself is correlation-based on per-window
+                             # PC1 vectors (see sim_mat_blas), so K_MDS only
+                             # affects the smoothing dimensionality. Yeah if u
+                             # so homeless u can K=2 to try, but here we don't
+                             # have time to test. K=5 is the safe default.
 SEED_MDS_AXES        <- 5L
 SIM_BAND_HALF        <- 200L
 SIM_N_FULL_THRESHOLD <- 6000L

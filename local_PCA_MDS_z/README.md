@@ -192,6 +192,35 @@ recomputes similarity. Bigger k = more smoothing. nn80 is the canonical
 L1 scale (chromosome-wide), nn40 is the canonical L2 scale (inside one
 L1 segment).
 
+**A note on the NN scales — honestly, we don't fully know.** ZO_G writes
+`sim_mat_nn{0,40,80,160,320}` by default. Our working interpretation:
+
+- **nn0**: unsmoothed raw `sim_mat`. Useful for cross-checking that the
+  smoothing isn't washing out real structure.
+- **nn40**: small-scale; preserves sub-block detail (good for L2 inside
+  one called L1 segment, e.g. nested inversions, small structural
+  variants, megabase-scale things).
+- **nn80**: chromosome-wide L1 default; the level where one inversion
+  shows up as one block and short-range noise is suppressed.
+- **nn160**: bigger blocks. Probably the right scale for very large
+  inversions or large LD blocks that span more than ~10 Mb.
+- **nn320**: very big inversions — chromosome-arm-scale rearrangements
+  if your organism has them.
+- And what we *think* the low end (nn20, the old default we dropped)
+  was picking up was: noise of family / pedigree LD on the scale of a
+  handful of contiguous windows. We removed it because nothing
+  downstream consumed it, but if you're working with a strongly
+  family-structured sample you might want to add it back.
+
+These interpretations are educated guesses, not anything we've
+rigorously calibrated against ground truth. Different organisms, different
+sample structures, different sequencing depths, different window sizes
+will probably shift what each `k` actually captures. If you're adapting
+this pipeline to another dataset and your L1 / L2 calls look weird, **try
+overriding the NN scales** with `NN_SIM_SCALES="20,40,80,160,320"` or
+similar before assuming anything else is broken. We genuinely don't have
+enough comparative data to tell you the right values up front.
+
 ### 1.5.5 Detection: cross-block scan on the diagonal
 
 Steps H and J use the **same algorithm**, just applied at different

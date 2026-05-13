@@ -49,7 +49,8 @@
 #   windows_master.tsv.gz             genome-wide registry, columns:
 #                                       global_window_id, chrom,
 #                                       window_idx, start_bp, end_bp,
-#                                       mid_bp, max_abs_z, is_outlier
+#                                       mid_bp, max_abs_z, is_outlier,
+#                                       q_min, is_outlier_fdr
 #   windows_master_summary.tsv        per-chrom row counts + ID ranges
 #   candidate_regions.tsv.gz          candidate inversion intervals:
 #                                       candidate_id, chrom, start_bp,
@@ -84,6 +85,7 @@ while (i <= length(args)) {
   else if (a == "--gap_bp"      && i < length(args)) { GAP_BP      <- as.integer(args[i + 1]); i <- i + 2L }
   else if (a == "--min_windows" && i < length(args)) { MIN_WINDOWS <- as.integer(args[i + 1]); i <- i + 2L }
   else if (a == "--z_thresh"    && i < length(args)) { Z_THRESH    <- as.numeric(args[i + 1]); i <- i + 2L }
+  else if (a == "--fdr_q"       && i < length(args)) { i <- i + 2L }  # legacy no-op
   else if (a == "--patch_rds"   && i < length(args)) { PATCH_RDS   <- tolower(args[i + 1]) %in% c("true", "1", "yes"); i <- i + 2L }
   else { i <- i + 1L }
 }
@@ -96,8 +98,8 @@ precomp_files <- sort(list.files(PRECOMP_DIR, pattern = "\\.precomp\\.rds$",
 if (length(precomp_files) == 0L) stop("[TR_D] no .precomp.rds in ", PRECOMP_DIR)
 
 message(sprintf("[TR_D] precomp_dir=%s outdir=%s", PRECOMP_DIR, OUTDIR))
-message(sprintf("[TR_D] gap_bp=%d min_windows=%d z_thresh=%.2f patch_rds=%s",
-                GAP_BP, MIN_WINDOWS, Z_THRESH, as.character(PATCH_RDS)))
+message(sprintf("[TR_D] z_thresh=%.2f patch_rds=%s",
+                Z_THRESH, as.character(PATCH_RDS)))
 message("[TR_D] found ", length(precomp_files), " precomp files")
 
 # =============================================================================
@@ -147,8 +149,9 @@ for (f in precomp_files) {
     mode             = pc$mode %||% NA_character_
   )
   chrom_order <- c(chrom_order, chr)
-  message(sprintf("[TR_D] %s: %d windows -> global_id %d..%d (%d outliers)",
-                  chr, n, ids[1L], ids[n], summary_rows[[chr]]$n_outlier))
+  message(sprintf("[TR_D] %s: %d windows -> global_id %d..%d (%d z-outliers; gap-bp merge disabled)",
+                  chr, n, ids[1L], ids[n],
+                  summary_rows[[chr]]$n_outlier))
   rm(pc, dt, reg); invisible(gc(verbose = FALSE))
 }
 
@@ -193,70 +196,16 @@ if (PATCH_RDS) {
 }
 
 # =============================================================================
-# Pass 3: cluster MDS_outlier flags into candidate regions
+# Pass 3: candidate-region clustering DISABLED 2026-05-13
 # =============================================================================
-# Identical algorithm to path-1's cluster_outliers_bp, but operating on the
-# unified master registry and producing genome-wide candidate IDs.
-cluster_outliers_bp <- function(reg, gap_bp, min_windows) {
-  reg <- reg[order(start_bp)]
-  idx <- which(reg$is_outlier)
-  if (length(idx) == 0L) return(NULL)
-  clusters <- list(); cur <- idx[1L]
-  if (length(idx) > 1L) {
-    for (ii in idx[-1L]) {
-      if ((reg$start_bp[ii] - reg$end_bp[max(cur)]) <= gap_bp) {
-        cur <- c(cur, ii)
-      } else {
-        if (length(cur) >= min_windows) clusters[[length(clusters) + 1L]] <- cur
-        cur <- ii
-      }
-    }
-  }
-  if (length(cur) >= min_windows) clusters[[length(clusters) + 1L]] <- cur
-  clusters
-}
-
-cand_rows <- list()
-membership_rows <- list()
-cand_id <- 0L
-# Cluster per-chrom, on non-local-mode chroms only
-mdsable_chroms <- setdiff(chrom_order, local_mode_chroms)
-for (chr in mdsable_chroms) {
-  reg <- master_rows[[chr]]
-  if (is.null(reg)) next
-  clusters <- cluster_outliers_bp(reg, GAP_BP, MIN_WINDOWS)
-  if (is.null(clusters)) next
-  for (cl in clusters) {
-    cand_id <- cand_id + 1L
-    xx <- reg[cl]
-    cand_rows[[length(cand_rows) + 1L]] <- data.table(
-      candidate_id            = cand_id,
-      chrom                   = chr,
-      start_bp                = min(xx$start_bp),
-      end_bp                  = max(xx$end_bp),
-      center_bp               = as.integer((min(xx$start_bp) + max(xx$end_bp)) / 2L),
-      n_windows               = nrow(xx),
-      first_global_window_id  = min(xx$global_window_id),
-      last_global_window_id   = max(xx$global_window_id),
-      max_z_in_region         = round(max(xx$max_abs_z, na.rm = TRUE), 3),
-      median_z_in_region      = round(median(xx$max_abs_z, na.rm = TRUE), 3)
-    )
-    membership_rows[[length(membership_rows) + 1L]] <- data.table(
-      candidate_id     = cand_id,
-      global_window_id = xx$global_window_id,
-      chrom            = chr,
-      window_idx       = xx$window_idx,
-      start_bp         = xx$start_bp,
-      end_bp           = xx$end_bp,
-      max_abs_z        = xx$max_abs_z
-    )
-  }
-}
-
-cand_dt <- if (length(cand_rows) > 0L) rbindlist(cand_rows) else
-  data.table(candidate_id = integer(), chrom = character())
-membership_dt <- if (length(membership_rows) > 0L) rbindlist(membership_rows) else
-  data.table(candidate_id = integer(), global_window_id = integer())
+# Legacy lostruct-style gap-bp merge of is_outlier flags. Not consumed by
+# L1/L2 stripe detection (which reads sim_mat directly). In dense-outlier
+# regimes the gap-bp walk over-merges across noise. Empty placeholder files
+# are still written so any downstream tooling that auto-resolves the paths
+# doesn't break.
+# =============================================================================
+cand_dt       <- data.table(candidate_id = integer(), chrom = character())
+membership_dt <- data.table(candidate_id = integer(), global_window_id = integer())
 
 fwrite(cand_dt, file.path(OUTDIR, "candidate_regions.tsv.gz"),
        sep = "\t", compress = "gzip")
@@ -264,9 +213,6 @@ fwrite(membership_dt, file.path(OUTDIR, "candidate_window_membership.tsv.gz"),
        sep = "\t", compress = "gzip")
 
 elapsed <- round(proc.time()[3] - t0, 1)
-message(sprintf("[TR_D] candidate regions: %d (%d member windows)",
-                nrow(cand_dt), nrow(membership_dt)))
+message("[TR_D] candidate regions: 0 (gap-bp merge disabled)")
 message(sprintf("[TR_D] DONE in %.1fs", elapsed))
 message("  registry:    ", file.path(OUTDIR, "windows_master.tsv.gz"))
-message("  candidates:  ", file.path(OUTDIR, "candidate_regions.tsv.gz"))
-message("  membership:  ", file.path(OUTDIR, "candidate_window_membership.tsv.gz"))
