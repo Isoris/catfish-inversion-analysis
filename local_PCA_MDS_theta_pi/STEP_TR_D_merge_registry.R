@@ -134,15 +134,19 @@ for (f in precomp_files) {
   ids <- seq.int(global_id + 1L, global_id + n)
   global_id <- global_id + n
 
-  # BH-FDR sibling flag (Faria et al. 2025 style): per-chrom Benjamini-
-  # Hochberg on a two-sided normal p computed from max_abs_z. Note that
-  # max_abs_z is a max over a few MDS axes, so the N(0,1) null is mildly
-  # anti-conservative; treat q as a reporting summary, not a strict test.
-  zv <- dt$max_abs_z
-  pv <- 2 * pnorm(-abs(zv))
-  qv <- rep(NA_real_, length(pv))
-  finite_p <- is.finite(pv)
-  if (any(finite_p)) qv[finite_p] <- p.adjust(pv[finite_p], method = "BH")
+  # ──────────────────────────────────────────────────────────────────────
+  # BH-FDR sibling flag DISABLED 2026-05-13. The is_outlier* columns and
+  # the candidate-region clustering below are not consumed by L1/L2 stripe
+  # detection (which reads sim_mat directly). Kept as if(FALSE) for easy
+  # re-enabling for methods-comparison panels.
+  # ──────────────────────────────────────────────────────────────────────
+  qv <- rep(NA_real_, n)
+  if (FALSE) {
+    zv <- dt$max_abs_z
+    pv <- 2 * pnorm(-abs(zv))
+    finite_p <- is.finite(pv)
+    if (any(finite_p)) qv[finite_p] <- p.adjust(pv[finite_p], method = "BH")
+  }
 
   reg <- data.table(
     global_window_id = ids,
@@ -153,8 +157,6 @@ for (f in precomp_files) {
     mid_bp           = dt$mid_bp,
     max_abs_z        = dt$max_abs_z,
     is_outlier       = is.finite(dt$max_abs_z) & dt$max_abs_z >= Z_THRESH,
-    q_min            = qv,
-    is_outlier_fdr   = is.finite(qv) & qv <= FDR_Q,
     mode             = pc$mode %||% NA_character_
   )
   master_rows[[chr]] <- reg
@@ -164,16 +166,14 @@ for (f in precomp_files) {
     first_global_id  = ids[1L],
     last_global_id   = ids[n],
     n_outlier        = sum(reg$is_outlier, na.rm = TRUE),
-    n_outlier_fdr    = sum(reg$is_outlier_fdr, na.rm = TRUE),
     median_max_z     = round(median(reg$max_abs_z, na.rm = TRUE), 3),
     q95_max_z        = round(quantile(reg$max_abs_z, 0.95, na.rm = TRUE), 3),
     mode             = pc$mode %||% NA_character_
   )
   chrom_order <- c(chrom_order, chr)
-  message(sprintf("[TR_D] %s: %d windows -> global_id %d..%d (%d z-outliers, %d BH-FDR outliers)",
+  message(sprintf("[TR_D] %s: %d windows -> global_id %d..%d (%d z-outliers; gap-bp merge disabled)",
                   chr, n, ids[1L], ids[n],
-                  summary_rows[[chr]]$n_outlier,
-                  summary_rows[[chr]]$n_outlier_fdr))
+                  summary_rows[[chr]]$n_outlier))
   rm(pc, dt, reg); invisible(gc(verbose = FALSE))
 }
 
@@ -218,70 +218,16 @@ if (PATCH_RDS) {
 }
 
 # =============================================================================
-# Pass 3: cluster MDS_outlier flags into candidate regions
+# Pass 3: candidate-region clustering DISABLED 2026-05-13
 # =============================================================================
-# Identical algorithm to path-1's cluster_outliers_bp, but operating on the
-# unified master registry and producing genome-wide candidate IDs.
-cluster_outliers_bp <- function(reg, gap_bp, min_windows) {
-  reg <- reg[order(start_bp)]
-  idx <- which(reg$is_outlier)
-  if (length(idx) == 0L) return(NULL)
-  clusters <- list(); cur <- idx[1L]
-  if (length(idx) > 1L) {
-    for (ii in idx[-1L]) {
-      if ((reg$start_bp[ii] - reg$end_bp[max(cur)]) <= gap_bp) {
-        cur <- c(cur, ii)
-      } else {
-        if (length(cur) >= min_windows) clusters[[length(clusters) + 1L]] <- cur
-        cur <- ii
-      }
-    }
-  }
-  if (length(cur) >= min_windows) clusters[[length(clusters) + 1L]] <- cur
-  clusters
-}
-
-cand_rows <- list()
-membership_rows <- list()
-cand_id <- 0L
-# Cluster per-chrom, on non-local-mode chroms only
-mdsable_chroms <- setdiff(chrom_order, local_mode_chroms)
-for (chr in mdsable_chroms) {
-  reg <- master_rows[[chr]]
-  if (is.null(reg)) next
-  clusters <- cluster_outliers_bp(reg, GAP_BP, MIN_WINDOWS)
-  if (is.null(clusters)) next
-  for (cl in clusters) {
-    cand_id <- cand_id + 1L
-    xx <- reg[cl]
-    cand_rows[[length(cand_rows) + 1L]] <- data.table(
-      candidate_id            = cand_id,
-      chrom                   = chr,
-      start_bp                = min(xx$start_bp),
-      end_bp                  = max(xx$end_bp),
-      center_bp               = as.integer((min(xx$start_bp) + max(xx$end_bp)) / 2L),
-      n_windows               = nrow(xx),
-      first_global_window_id  = min(xx$global_window_id),
-      last_global_window_id   = max(xx$global_window_id),
-      max_z_in_region         = round(max(xx$max_abs_z, na.rm = TRUE), 3),
-      median_z_in_region      = round(median(xx$max_abs_z, na.rm = TRUE), 3)
-    )
-    membership_rows[[length(membership_rows) + 1L]] <- data.table(
-      candidate_id     = cand_id,
-      global_window_id = xx$global_window_id,
-      chrom            = chr,
-      window_idx       = xx$window_idx,
-      start_bp         = xx$start_bp,
-      end_bp           = xx$end_bp,
-      max_abs_z        = xx$max_abs_z
-    )
-  }
-}
-
-cand_dt <- if (length(cand_rows) > 0L) rbindlist(cand_rows) else
-  data.table(candidate_id = integer(), chrom = character())
-membership_dt <- if (length(membership_rows) > 0L) rbindlist(membership_rows) else
-  data.table(candidate_id = integer(), global_window_id = integer())
+# Legacy lostruct-style gap-bp merge of is_outlier flags. Not consumed by
+# L1/L2 stripe detection (which reads sim_mat directly). In dense-outlier
+# regimes the gap-bp walk over-merges across noise. Empty placeholder files
+# are still written so any downstream tooling that auto-resolves the paths
+# doesn't break.
+# =============================================================================
+cand_dt       <- data.table(candidate_id = integer(), chrom = character())
+membership_dt <- data.table(candidate_id = integer(), global_window_id = integer())
 
 fwrite(cand_dt, file.path(OUTDIR, "candidate_regions.tsv.gz"),
        sep = "\t", compress = "gzip")
@@ -289,9 +235,6 @@ fwrite(membership_dt, file.path(OUTDIR, "candidate_window_membership.tsv.gz"),
        sep = "\t", compress = "gzip")
 
 elapsed <- round(proc.time()[3] - t0, 1)
-message(sprintf("[TR_D] candidate regions: %d (%d member windows)",
-                nrow(cand_dt), nrow(membership_dt)))
+message("[TR_D] candidate regions: 0 (gap-bp merge disabled)")
 message(sprintf("[TR_D] DONE in %.1fs", elapsed))
 message("  registry:    ", file.path(OUTDIR, "windows_master.tsv.gz"))
-message("  candidates:  ", file.path(OUTDIR, "candidate_regions.tsv.gz"))
-message("  membership:  ", file.path(OUTDIR, "candidate_window_membership.tsv.gz"))

@@ -143,60 +143,70 @@ if (length(all_chr_results) == 0) stop("No chromosomes produced results")
 message("[STEP10v2-S2] Loaded ", length(all_chr_results), " chromosomes")
 
 # =============================================================================
-# MERGE + CANDIDATE REGIONS (identical logic to monolithic STEP10v2)
+# MERGE (per-chrom MDS results -> unified $per_chr container)
+# =============================================================================
+# 2026-05-13: the gap-bp candidate-region clustering (cluster_outliers_bp on
+# MDS{ax}_outlier flags) is disabled. It was the lostruct-style nominator
+# and is not consumed by L1/L2 stripe detection (which reads sim_mat directly).
+# In dense-outlier regimes (admixed / family-structured / repetitive data)
+# the gap-bp walk transitively merges across noise outliers and over-merges
+# unrelated regions into a single giant candidate. Kept as `if (FALSE)`
+# for easy re-enabling for methods-comparison panels.
 # =============================================================================
 
 out_dt <- rbindlist(lapply(all_chr_results, function(x) x$out_dt), fill = TRUE)
 message("[STEP10v2-S2] Merged: ", nrow(out_dt), " windows")
 
-mds_cols <- grep("^MDS\\d+$", names(out_dt), value = TRUE)
-cand_list <- list()
-membership_list <- list()
-cand_id <- 0L
+cand_dt <- data.table(candidate_id = integer(), chrom = character())
+membership_dt <- data.table(candidate_id = integer(), global_window_id = integer(),
+                            chrom = character())
 
-for (ax in seq_along(mds_cols)) {
-  flag_col <- paste0("MDS", ax, "_outlier")
-  if (!(flag_col %in% names(out_dt))) next
+if (FALSE) {  # legacy lostruct gap-bp merge (disabled)
+  mds_cols <- grep("^MDS\\d+$", names(out_dt), value = TRUE)
+  cand_list <- list()
+  membership_list <- list()
+  cand_id <- 0L
 
-  for (chr in unique(out_dt$chrom)) {
-    sub <- out_dt[chrom == chr][order(start_bp)]
-    clusters <- cluster_outliers_bp(sub, flag_col, GAP_BP, MIN_WINDOWS)
-    if (!is.null(clusters)) {
-      for (cl in clusters) {
-        cand_id <- cand_id + 1L
-        xx <- sub[cl]
-        cand_list[[length(cand_list) + 1]] <- data.table(
-          candidate_id = cand_id, mds_axis = ax, chrom = chr,
-          start_bp = min(xx$start_bp), end_bp = max(xx$end_bp),
-          center_bp = as.integer((min(xx$start_bp) + max(xx$end_bp)) / 2),
-          n_windows = nrow(xx),
-          first_global_window_id = min(xx$global_window_id),
-          last_global_window_id = max(xx$global_window_id)
-        )
-        for (k in seq_len(nrow(xx))) {
-          membership_list[[length(membership_list) + 1]] <- data.table(
-            candidate_id = cand_id,
-            global_window_id = xx$global_window_id[k],
-            chrom = chr,
-            start_bp = xx$start_bp[k],
-            end_bp = xx$end_bp[k],
-            mds_axis = ax
+  for (ax in seq_along(mds_cols)) {
+    flag_col <- paste0("MDS", ax, "_outlier")
+    if (!(flag_col %in% names(out_dt))) next
+
+    for (chr in unique(out_dt$chrom)) {
+      sub <- out_dt[chrom == chr][order(start_bp)]
+      clusters <- cluster_outliers_bp(sub, flag_col, GAP_BP, MIN_WINDOWS)
+      if (!is.null(clusters)) {
+        for (cl in clusters) {
+          cand_id <- cand_id + 1L
+          xx <- sub[cl]
+          cand_list[[length(cand_list) + 1]] <- data.table(
+            candidate_id = cand_id, mds_axis = ax, chrom = chr,
+            start_bp = min(xx$start_bp), end_bp = max(xx$end_bp),
+            center_bp = as.integer((min(xx$start_bp) + max(xx$end_bp)) / 2),
+            n_windows = nrow(xx),
+            first_global_window_id = min(xx$global_window_id),
+            last_global_window_id = max(xx$global_window_id)
           )
+          for (k in seq_len(nrow(xx))) {
+            membership_list[[length(membership_list) + 1]] <- data.table(
+              candidate_id = cand_id,
+              global_window_id = xx$global_window_id[k],
+              chrom = chr,
+              start_bp = xx$start_bp[k],
+              end_bp = xx$end_bp[k],
+              mds_axis = ax
+            )
+          }
         }
       }
     }
   }
-}
 
-cand_dt <- if (length(cand_list) > 0) rbindlist(cand_list) else {
-  data.table(candidate_id = integer(), chrom = character())
-}
-membership_dt <- if (length(membership_list) > 0) rbindlist(membership_list) else {
-  data.table(candidate_id = integer(), global_window_id = integer(), chrom = character())
+  cand_dt <- if (length(cand_list) > 0) rbindlist(cand_list) else cand_dt
+  membership_dt <- if (length(membership_list) > 0) rbindlist(membership_list) else membership_dt
 }
 
 message("[STEP10v2-S2] Candidate regions: ", nrow(cand_dt),
-        " (", nrow(membership_dt), " member windows)")
+        " (", nrow(membership_dt), " member windows) [gap-bp merge disabled]")
 
 # =============================================================================
 # WRITE OUTPUTS (identical file names and structure to monolithic STEP10v2)

@@ -50,7 +50,16 @@ rds_dir    <- NULL
 outdir     <- NULL
 outprefix  <- "inversion_localpca"
 FOCAL_CHR  <- NULL
-MDS_MODE   <- "chunked_2x"
+MDS_MODE   <- "chromosome"   # 2026-05-13: switched default from "chunked_2x"
+                             # to "chromosome". Chunked background is only
+                             # needed to keep per-axis MDS-Z statistics stable
+                             # against large inversions; those Z's are not
+                             # consumed by L1/L2 stripe detection (which reads
+                             # sim_mat directly from dmat_focal). Dropping
+                             # chunking cuts dmat from (3N)^2 to N^2 (~9x
+                             # speedup) and cmdscale by ~27x. "chunked_2x" is
+                             # still selectable via --mds_mode for legacy
+                             # lostruct-style outlier reporting.
 NPC        <- 4L           # v9.4: default raised from 2L → 4L to match
                            # 2a_local_pca/STEP_A02|A03 default. The lostruct
                            # distance uses top-NPC eigvals/vecs; running B01
@@ -58,12 +67,18 @@ NPC        <- 4L           # v9.4: default raised from 2L → 4L to match
                            # NPC=4 silently used only half the available
                            # signal and produced different distances than
                            # the legacy STEP_B01 monolithic (which was 4).
-MDS_DIMS   <- 20L
-Z_THRESH   <- 3.0
-FDR_Q      <- 0.05         # BH-FDR target for per-axis outlier flag.
-                           # Emitted as MDS{ax}_outlier_fdr alongside the
-                           # legacy MDS{ax}_outlier (|z| >= Z_THRESH).
-                           # Candidate clustering still uses the legacy flag.
+MDS_DIMS   <- 2L           # 2026-05-13: reduced from 20L to 2L. Only the 2D
+                           # scatter is consumed downstream (atlas plots);
+                           # sim_mat is built directly from dmat_focal (see
+                           # ZO_G:730), not from MDS coords, so higher dims
+                           # contribute nothing to L1/L2 calls. Truncating
+                           # cmdscale at k=2 saves the bulk of MDS cost.
+Z_THRESH   <- 3.0          # legacy; Z #1 (per-axis MDS-Z) is descriptive
+                           # only and not consumed by L1/L2. Kept for atlas
+                           # Z-profile plots and methods-section comparability.
+FDR_Q      <- 0.05         # 2026-05-13: BH-FDR block below is commented out
+                           # (legacy lostruct-style reporting; not consumed
+                           # downstream).
 SEED       <- 42L
 
 i <- 1L
@@ -466,13 +481,22 @@ for (ax in seq_len(ncol(mds$points))) {
 
   mds_focal[[paste0("MDS", ax, "_outlier")]] <- abs(mds_focal[[zcol]]) >= Z_THRESH
 
-  # BH-FDR sibling flag (Faria et al. 2025 style). Two-sided p from the
-  # robust z (normal null), then per-axis Benjamini-Hochberg adjustment.
-  zv <- mds_focal[[zcol]]
-  pv <- 2 * pnorm(-abs(zv))
-  qv <- p.adjust(pv, method = "BH")
-  mds_focal[[paste0("MDS", ax, "_q")]] <- qv
-  mds_focal[[paste0("MDS", ax, "_outlier_fdr")]] <- is.finite(qv) & qv <= FDR_Q
+  # ──────────────────────────────────────────────────────────────────────
+  # BH-FDR sibling flag (Faria et al. 2025 style). DISABLED 2026-05-13.
+  # Z #1 (per-axis MDS-Z) is not consumed by L1/L2 stripe detection — it
+  # was the lostruct outlier-and-merge nominator. The L1 boundary scan
+  # uses its own diagonal-distance Z (Z #2) computed inside ZO_H from
+  # sim_mat, which is a completely separate normalization. We keep the
+  # block here for easy re-enabling if you want to report 5% FDR window
+  # outliers in a methods comparison panel; otherwise it's dead weight.
+  # ──────────────────────────────────────────────────────────────────────
+  if (FALSE) {
+    zv <- mds_focal[[zcol]]
+    pv <- 2 * pnorm(-abs(zv))
+    qv <- p.adjust(pv, method = "BH")
+    mds_focal[[paste0("MDS", ax, "_q")]] <- qv
+    mds_focal[[paste0("MDS", ax, "_outlier_fdr")]] <- is.finite(qv) & qv <= FDR_Q
+  }
 }
 
 setkey(mds_focal, global_window_id)
@@ -484,7 +508,7 @@ mds_mat_focal <- as.matrix(mds_focal[, ..mds_cols])
 
 elapsed <- round(proc.time()[3] - t0, 1)
 n_outlier <- if ("MDS1_outlier" %in% names(out_chr)) sum(out_chr$MDS1_outlier, na.rm = TRUE) else 0L
-n_outlier_fdr <- if ("MDS1_outlier_fdr" %in% names(out_chr)) sum(out_chr$MDS1_outlier_fdr, na.rm = TRUE) else 0L
+n_outlier_fdr <- 0L  # BH-FDR block disabled (see line ~470)
 
 # =============================================================================
 # WRITE PER-CHR RESULT
