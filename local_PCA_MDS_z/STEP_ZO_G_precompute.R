@@ -315,4 +315,3 @@ message("  Windows with robust |z| >= 3.0: ", sum(summary_dt$n_z_above_3))
 
 message("\n  Precomp dir:  ", precomp_dir)
 message("  Summary:      ", file.path(outdir, "precomp_summary.tsv"))
-message("\n  Next: L1/L2 stripe detection (ZO_H, ZO_J) on the per-chrom sim_mats.")
