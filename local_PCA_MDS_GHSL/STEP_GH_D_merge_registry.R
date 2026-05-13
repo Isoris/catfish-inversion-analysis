@@ -33,12 +33,16 @@
 #   --gap_bp      <int>     gap-merge tolerance (default 500_000)
 #   --min_windows <int>     min windows per region (default 3)
 #   --z_thresh    <num>     |max_abs_z| outlier threshold (default 3.0)
+#   --fdr_q       <num>     BH-FDR target (default 0.05; Faria et al. 2025
+#                           style). Emits sibling columns is_outlier_fdr
+#                           and q_min on the master registry; candidate
+#                           clustering still uses is_outlier.
 #   --patch_rds   <bool>    if "true" (default), patches each
 #                           <chr>.ghsl_precomp.rds with global_window_id
 #
 # Outputs (in --outdir):
-#   ghsl_windows_master.tsv.gz
-#   ghsl_windows_master_summary.tsv
+#   ghsl_windows_master.tsv.gz        adds columns q_min, is_outlier_fdr
+#   ghsl_windows_master_summary.tsv   adds column n_outlier_fdr
 #   ghsl_candidate_regions.tsv.gz
 #   ghsl_candidate_window_membership.tsv.gz
 # =============================================================================
@@ -52,6 +56,7 @@ OUTDIR      <- NA_character_
 GAP_BP      <- 500000L
 MIN_WINDOWS <- 3L
 Z_THRESH    <- 3.0
+FDR_Q       <- 0.05
 PATCH_RDS   <- TRUE
 
 args <- commandArgs(trailingOnly = TRUE)
@@ -63,6 +68,7 @@ while (i <= length(args)) {
   else if (a == "--gap_bp"      && i < length(args)) { GAP_BP      <- as.integer(args[i + 1]); i <- i + 2L }
   else if (a == "--min_windows" && i < length(args)) { MIN_WINDOWS <- as.integer(args[i + 1]); i <- i + 2L }
   else if (a == "--z_thresh"    && i < length(args)) { Z_THRESH    <- as.numeric(args[i + 1]); i <- i + 2L }
+  else if (a == "--fdr_q"       && i < length(args)) { FDR_Q       <- as.numeric(args[i + 1]); i <- i + 2L }
   else if (a == "--patch_rds"   && i < length(args)) { PATCH_RDS   <- tolower(args[i + 1]) %in% c("true", "1", "yes"); i <- i + 2L }
   else { i <- i + 1L }
 }
@@ -75,8 +81,8 @@ precomp_files <- sort(list.files(PRECOMP_DIR, pattern = "\\.ghsl_precomp\\.rds$"
 if (length(precomp_files) == 0L) stop("[GH_D] no .ghsl_precomp.rds in ", PRECOMP_DIR)
 
 message(sprintf("[GH_D] precomp_dir=%s outdir=%s", PRECOMP_DIR, OUTDIR))
-message(sprintf("[GH_D] gap_bp=%d min_windows=%d z_thresh=%.2f patch_rds=%s",
-                GAP_BP, MIN_WINDOWS, Z_THRESH, as.character(PATCH_RDS)))
+message(sprintf("[GH_D] gap_bp=%d min_windows=%d z_thresh=%.2f fdr_q=%.3f patch_rds=%s",
+                GAP_BP, MIN_WINDOWS, Z_THRESH, FDR_Q, as.character(PATCH_RDS)))
 message("[GH_D] found ", length(precomp_files), " precomp files")
 
 # ── Pass 1: registry ────────────────────────────────────────────────────────
@@ -91,6 +97,17 @@ for (f in precomp_files) {
   dt <- pc$dt; n <- nrow(dt)
   if (n == 0L) { rm(pc); next }
   ids <- seq.int(global_id + 1L, global_id + n); global_id <- global_id + n
+
+  # BH-FDR sibling flag (Faria et al. 2025 style): per-chrom Benjamini-
+  # Hochberg on a two-sided normal p computed from max_abs_z. max_abs_z is
+  # a max over MDS axes, so the N(0,1) null is mildly anti-conservative —
+  # q is for reporting alongside the legacy z threshold, not a strict test.
+  zv <- dt$max_abs_z
+  pv <- 2 * pnorm(-abs(zv))
+  qv <- rep(NA_real_, length(pv))
+  finite_p <- is.finite(pv)
+  if (any(finite_p)) qv[finite_p] <- p.adjust(pv[finite_p], method = "BH")
+
   reg <- data.table(
     global_window_id = ids,
     chrom            = chr,
@@ -100,6 +117,8 @@ for (f in precomp_files) {
     mid_bp           = dt$mid_bp,
     max_abs_z        = dt$max_abs_z,
     is_outlier       = is.finite(dt$max_abs_z) & dt$max_abs_z >= Z_THRESH,
+    q_min            = qv,
+    is_outlier_fdr   = is.finite(qv) & qv <= FDR_Q,
     mode             = pc$mode %||% NA_character_,
     scale            = pc$scale %||% NA_character_
   )
@@ -110,14 +129,17 @@ for (f in precomp_files) {
     first_global_id  = ids[1L],
     last_global_id   = ids[n],
     n_outlier        = sum(reg$is_outlier, na.rm = TRUE),
+    n_outlier_fdr    = sum(reg$is_outlier_fdr, na.rm = TRUE),
     median_max_z     = round(median(reg$max_abs_z, na.rm = TRUE), 3),
     q95_max_z        = round(quantile(reg$max_abs_z, 0.95, na.rm = TRUE), 3),
     mode             = pc$mode %||% NA_character_,
     scale            = pc$scale %||% NA_character_
   )
   chrom_order <- c(chrom_order, chr)
-  message(sprintf("[GH_D] %s: %d windows -> global_id %d..%d (%d outliers, scale=%s)",
-                  chr, n, ids[1L], ids[n], summary_rows[[chr]]$n_outlier,
+  message(sprintf("[GH_D] %s: %d windows -> global_id %d..%d (%d z-outliers, %d BH-FDR outliers, scale=%s)",
+                  chr, n, ids[1L], ids[n],
+                  summary_rows[[chr]]$n_outlier,
+                  summary_rows[[chr]]$n_outlier_fdr,
                   pc$scale %||% "?"))
   rm(pc, dt, reg); invisible(gc(verbose = FALSE))
 }
