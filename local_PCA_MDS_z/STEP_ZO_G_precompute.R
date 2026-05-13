@@ -3,25 +3,22 @@
 # =============================================================================
 # STEP_ZO_G_precompute.R
 #
-# Per-chromosome precomputation for the Z (local-PCA dosage) path. Reads
-# the unified MDS RDS produced by ZO_F and emits ONE precomp.rds per
-# chromosome plus the NN-smoothed similarity matrices that the L1/L2
-# detectors and the atlas consume. Parallelized across chromosomes via
-# mclapply.
+# Per-chromosome precompute for the Z (local-PCA dosage) path. Reads the
+# per-chrom MDS results directly from <outdir>/tmp/<chr>.mds_perchr.rds
+# (written by ZO_E) and emits ONE precomp.rds per chromosome plus the
+# NN-smoothed similarity matrices that the L1/L2 detectors and the atlas
+# consume. Parallelized across chromosomes via mclapply.
 #
-# Pipeline position:
-#   ZO_E (per-chrom MDS) -> ZO_F (merge to unified MDS RDS) ->
-#   ZO_G (this script: precomp + sim_mats) ->
+# Pipeline position (no merge step):
+#   ZO_E (per-chrom MDS) -> ZO_G (this script: precomp + sim_mats) ->
 #   ZO_H / ZO_J (L1 / L2 stripe detection on sim_mat) ->
 #   atlas (per-region sample PCA on demand)
 #
 # Inputs:
-#   <step02b_outprefix>     positional 1: prefix from ZO_F
-#                           (the script appends .mds.rds and reads from there)
+#   <mds_prefix>            positional 1; only dirname() is used to locate tmp/
 #   <outdir>                positional 2: output root
-#   [--dosage_dir <dir>]    NOT CURRENTLY CONSUMED (legacy flag retained for
-#                           CLI compat). The dosage-het-rate pass that used
-#                           it was removed 2026-05-13.
+#   [--dosage_dir <dir>]    legacy flag; silently ignored (the dosage-het-rate
+#                           pass was removed 2026-05-13).
 #
 # Outputs (in <outdir>/):
 #   precomp/<chr>.precomp.rds                 per-chrom precomp
@@ -60,7 +57,9 @@ suppressPackageStartupMessages({
 
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 2) {
-  stop("Usage: Rscript STEP_C01a_precompute.R <step10_outprefix> <outdir> [--dosage_dir <dir>]")
+  stop("Usage: Rscript STEP_ZO_G_precompute.R <mds_prefix> <outdir>\n",
+       "  <mds_prefix>  legacy positional; only dirname() is used to locate tmp/\n",
+       "  <outdir>      output root; ZO_E tmp/ should live at <outdir>/tmp/")
 }
 
 step10_prefix <- args[1]
@@ -68,13 +67,12 @@ outdir        <- args[2]
 precomp_dir   <- file.path(outdir, "precomp")
 dir.create(precomp_dir, recursive = TRUE, showWarnings = FALSE)
 
-# Optional args
-dosage_dir <- NULL
+# Legacy flag still accepted but silently ignored (dosage_het_rate pass removed).
 i <- 3L
 while (i <= length(args)) {
   a <- args[i]
-  if (a == "--dosage_dir" && i < length(args)) { dosage_dir <- args[i+1]; i <- i+2 }
-  else { i <- i+1 }
+  if (a == "--dosage_dir" && i < length(args)) { i <- i + 2L }
+  else { i <- i + 1L }
 }
 
 # =============================================================================
@@ -85,24 +83,45 @@ SEED_MDS_AXES    <- 5L    # number of MDS axes contributing to max_abs_z
 SEED_NEIGHBOR_K  <- 3L    # k for seed_nn_dist
 
 # =============================================================================
-# LOAD MDS
+# LOAD PER-CHROM MDS RESULTS
 # =============================================================================
+# As of 2026-05-13 the ZO_F merge step is gone. ZO_G reads each chromosome's
+# .mds_perchr.rds directly from <outdir>/tmp/ — global_window_id was already
+# assigned upstream by ZO_C/D and carried through ZO_E, so no merging needed.
+# step10_prefix is still accepted as the first positional for CLI back-compat;
+# its dirname is used to locate the tmp/ directory.
 
-mds_rds_file <- paste0(step10_prefix, ".mds.rds")
-if (!file.exists(mds_rds_file)) stop("Missing: ", mds_rds_file)
+tmpdir <- file.path(outdir, "tmp")
+if (!dir.exists(tmpdir)) {
+  # Fallback: try sibling-of-step10_prefix layout
+  alt <- file.path(dirname(step10_prefix), "tmp")
+  if (dir.exists(alt)) tmpdir <- alt else stop("Missing tmp dir (looked at ",
+                                               tmpdir, " and ", alt, ")")
+}
 
-message("[PRECOMP] v10.0 SLIM — local PCA z-outlier path only")
-message("[PRECOMP] Loading ", mds_rds_file, " ...")
+perchr_files <- sort(list.files(tmpdir, pattern = "\\.mds_perchr\\.rds$",
+                                full.names = TRUE))
+if (length(perchr_files) == 0L) stop("No .mds_perchr.rds files in ", tmpdir)
+
+message("[PRECOMP] Loading ", length(perchr_files), " per-chrom MDS results from ", tmpdir)
 t_load <- proc.time()
-mds_obj <- readRDS(mds_rds_file)
+per_chr <- list()
+for (f in perchr_files) {
+  obj <- readRDS(f)
+  if (!is.null(obj$skip) && obj$skip) {
+    message("[PRECOMP] SKIP ", obj$chrom, ": ", obj$reason)
+    next
+  }
+  chr <- obj$out_dt$chrom[1]
+  per_chr[[chr]] <- list(out_dt = obj$out_dt, dmat = obj$dmat, mds = obj$mds)
+}
 message("[PRECOMP] Loaded in ", round((proc.time() - t_load)[3], 1), "s")
 
-per_chr <- mds_obj$per_chr
-if (is.null(per_chr) || length(per_chr) == 0) stop("No per_chr data")
+if (length(per_chr) == 0L) stop("No usable per-chrom MDS results")
 chroms <- names(per_chr)
 message("[PRECOMP] ", length(chroms), " chromosomes")
 
-# Extract sample names
+# Extract sample names from any chrom's per-sample PC columns
 sample_names <- NULL
 for (chr_tmp in chroms) {
   dt_tmp <- as.data.table(per_chr[[chr_tmp]]$out_dt)
