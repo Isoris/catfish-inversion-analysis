@@ -152,6 +152,29 @@ export OUT_ENVELOPES_DIR="${OUT_ENVELOPES_DIR:-${PATH2_ROOT}/03_per_chrom}"
 export JSON_OUT_DIR="${JSON_OUT_DIR:-${PATH2_ROOT}/04_atlas_json}"
 export THETA_JSON_SCHEMA_VERSION="${THETA_JSON_SCHEMA_VERSION:-1}"
 
+# =============================================================================
+# GHSL pipeline parameters (2026-05-14)
+# =============================================================================
+# Input: Clair3 postprocess per-sample TSVs at:
+#   ${MODULE_4A_ROOT}/postprocess_results/<chr>/<sample>/all_variants_with_phase.tsv
+# The prep step merges these into one <chr>.merged_phased_snps.tsv.gz per chrom.
+export MODULE_4A_ROOT="${MODULE_4A_ROOT:-${BASE}/MODULE_4A_SNP_INDEL50_Clair3}"
+export GHSL_POSTPROCESS_DIR="${GHSL_POSTPROCESS_DIR:-${MODULE_4A_ROOT}/postprocess_results}"
+
+# GHSL output tree (subdirs under PATH3_ROOT).
+export GHSL_PREP_DIR="${GHSL_PREP_DIR:-${PATH3_ROOT}/00_prep}"            # output of prep step
+export GHSL_MATRICES_DIR="${GHSL_MATRICES_DIR:-${PATH3_ROOT}/01_matrices}" # output of GH_A
+export GHSL_LOCALPCA_DIR="${GHSL_LOCALPCA_DIR:-${PATH3_ROOT}/02_local_pca}" # output of GH_B
+export GHSL_PRECOMP_DIR="${GHSL_PRECOMP_DIR:-${PATH3_ROOT}/03_precomp}"    # output of GH_C
+export GHSL_JSON_DIR="${GHSL_JSON_DIR:-${PATH3_ROOT}/04_atlas_json}"       # future atlas JSON
+
+# Multi-scale rolling aggregates (s10 = 10×raw-bp window, s50 = 50×, ...).
+export GHSL_SCALES="${GHSL_SCALES:-10,20,30,40,50,100}"
+
+# Default local-PCA scale (used by GH_B and GH_C when --scale not given).
+export GHSL_PCA_SCALE_FULL="${GHSL_PCA_SCALE_FULL:-s50}"   # coarse, --mode full
+export GHSL_PCA_SCALE_DENSE="${GHSL_PCA_SCALE_DENSE:-s10}" # dense, --mode local
+
 # ── Helper functions ─────────────────────────────────────────────────────────
 inv_timestamp() { date '+%F %T'; }
 inv_log()  { echo "[$(inv_timestamp)] [INV] $*"; }
