@@ -2,8 +2,8 @@
 #SBATCH -p compute
 #SBATCH -A lt200308
 #SBATCH -N 1
-#SBATCH --cpus-per-task=32
-#SBATCH --mem=64G
+#SBATCH --cpus-per-task=64
+#SBATCH --mem=128G
 #SBATCH -t 6:00:00
 #SBATCH -J theta_pi_all
 #SBATCH -o logs/theta_pi_all.%j.out
@@ -14,13 +14,14 @@
 #
 # Drop-in alternative to LAUNCH_TR_theta_pi.slurm for sites that can't (or
 # don't want to) use --array. Runs ALL chromosomes from chr.list inside a
-# SINGLE job, fanned out N_PARALLEL=8 at a time via xargs (-P 8).
+# SINGLE job, fanned out N_PARALLEL=16 at a time via xargs (-P 16).
 #
-# Why 8?
-#   32 CPU / 4 effective threads per worker ≈ 8 concurrent chroms.
-#   64 GB / ~6-8 GB peak per worker (dense pass) ≈ 8 concurrent fits.
+# Why 16?
+#   64 CPU / 4 effective threads per worker ≈ 16 concurrent chroms.
+#   128 GB / ~6-8 GB peak per worker (dense pass) ≈ 16 concurrent fits.
+# With 16 workers all 28 chroms finish in roughly 2 batches → ~1-2 h wall.
 # Tune via:
-#   N_PARALLEL=6 sbatch LAUNCH_TR_theta_pi_single_job.slurm chr.list
+#   N_PARALLEL=12 sbatch LAUNCH_TR_theta_pi_single_job.slurm chr.list
 #
 # Each worker logs to ${OUTROOT}/logs/theta_pi.<chrom>.log so the main
 # stdout stays readable. Use `tail -f` on a per-chrom log to see progress.
@@ -75,7 +76,7 @@ RSCRIPT="${RSCRIPT_BIN:-Rscript}"
 export RSCRIPT
 
 # ---- Limit BLAS threads inside each worker so we don't oversubscribe ------
-# (32 CPU total / 8 workers = 4 BLAS threads per worker)
+# (64 CPU total / 16 workers = 4 BLAS threads per worker)
 export OMP_NUM_THREADS=4
 export OPENBLAS_NUM_THREADS=4
 export MKL_NUM_THREADS=4
@@ -87,7 +88,7 @@ CHROM_LIST="${1:?ERROR: provide chr.list as argv1 (one chrom per line, line 1 = 
 
 CHROMS="$(tail -n +2 "${CHROM_LIST}" | awk 'NF>0')"
 N_TOTAL="$(echo "${CHROMS}" | wc -l)"
-N_PARALLEL="${N_PARALLEL:-8}"
+N_PARALLEL="${N_PARALLEL:-16}"
 
 echo "================================================================"
 echo "  θπ phase-2 single-job — ${N_TOTAL} chromosomes, ${N_PARALLEL} parallel"
