@@ -289,9 +289,10 @@ precompute_one_chr <- function(chr) {
       nn_dmat <- sqrt(nn_dsq)
 
       # Similarity transform: linear rescaling against this scale's own 95th
-      # percentile (matches the upstream sim_mat formula).
-      nn_dmax <- quantile(nn_dmat[is.finite(nn_dmat) & nn_dmat > 0], 0.95,
-                          na.rm = TRUE)
+      # percentile (matches the upstream sim_mat formula). IMPORTANT: include
+      # zeros in the quantile — excluding them shifts dmax up and compresses
+      # the dynamic range, producing washed-out (pastel) sim_mat plots.
+      nn_dmax <- quantile(nn_dmat[is.finite(nn_dmat)], 0.95, na.rm = TRUE)
       if (!is.finite(nn_dmax) || nn_dmax == 0) nn_dmax <- 1
       nn_sim <- 1 - pmin(nn_dmat / nn_dmax, 1)
       nn_sim[!is.finite(nn_sim)] <- 0
