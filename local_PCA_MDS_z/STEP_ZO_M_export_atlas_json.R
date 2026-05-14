@@ -117,20 +117,9 @@ if (is.null(PRECOMP) && !is.null(PRECOMP_DIR) && !is.null(CHR)) {
   cand <- file.path(PRECOMP_DIR, paste0(CHR, ".precomp.rds"))
   if (file.exists(cand)) { PRECOMP <- cand; message("[export v3] resolved --precomp: ", cand) }
 }
-if (!is.null(PRECOMP_DIR) && !is.null(CHR)) {
-  for (nn in NN_LIST) {
-    label <- paste0("nn", trimws(nn))
-    if (is.null(sim_scales_user[[label]])) {
-      cand <- file.path(PRECOMP_DIR, "sim_mats",
-                        paste0(CHR, ".sim_mat_", label, ".rds"))
-      if (file.exists(cand)) {
-        # injected lazily; the discovery loop below doesn't see CLI flags so
-        # we stash them into sim_scales_user directly.
-        # (sim_scales_user is initialized below — pre-create here.)
-      }
-    }
-  }
-}
+# (The sim_mat_<nn> auto-resolution lives below at lines ~155+ after
+#  sim_scales_user is initialized. An empty placeholder loop used to sit
+#  here that referenced sim_scales_user before initialization — removed.)
 if (is.null(L1_ENV) && !is.null(L1_DIR) && !is.null(CHR)) {
   cand <- file.path(L1_DIR, paste0(CHR, ".L1_envelopes.tsv"))
   if (file.exists(cand)) { L1_ENV <- cand; message("[export v3] resolved --l1_envelopes: ", cand) }
