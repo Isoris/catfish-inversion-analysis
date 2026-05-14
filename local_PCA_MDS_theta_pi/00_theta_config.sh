@@ -91,7 +91,7 @@ export CALLABLE_SITES="${BASE}/_shared/callable_regions.rf" # ANGSD region file 
 # noisy on real data): set PESTPG_SCALE="win50000.step10000" and
 # uncomment DOSAGE_WIN_BED_DIR usage in STEP_TR00b. One-line change.
 #
-# Original LANTA paths:
+# Original LANTA paths (the catfish per-sample pestPG files live here):
 #   PESTPG_DIR="${BASE}/het_roh/02_heterozygosity/03_theta/multiscale"
 #   THETA_TSV_DIR="${BASE}/het_roh/02_heterozygosity/05_aggregated"
 #
@@ -99,8 +99,13 @@ export CALLABLE_SITES="${BASE}/_shared/callable_regions.rf" # ANGSD region file 
 # 226 samples = 904 files; the diversity-analysis Module 03_theta_pi
 # producer outputs them here). PESTPG_GLOB selects the win10000.step2000
 # subset at read time.
-export PESTPG_DIR="${BASE}/results_diversity/03_theta_pi"
-export PESTPG_SCALE="win10000.step2000"
+#
+# 2026-05-13: PESTPG_DIR is now env-overridable so the same config works on
+# both layouts. Default = Lanta multiscale tree (where the actual data is).
+# Override at submit time:
+#   PESTPG_DIR=/path/to/your/pestpg sbatch LAUNCH_TR_theta_pi_single_job.slurm ...
+export PESTPG_DIR="${PESTPG_DIR:-${BASE}/het_roh/02_heterozygosity/03_theta/multiscale}"
+export PESTPG_SCALE="${PESTPG_SCALE:-win10000.step2000}"
 export PESTPG_GLOB="*.${PESTPG_SCALE}.pestPG"
 # Intermediate per-sample x per-window matrices land in the inversion path's
 # 01_local_pca slot (it's the input to local PCA in STEP_TR_B):
