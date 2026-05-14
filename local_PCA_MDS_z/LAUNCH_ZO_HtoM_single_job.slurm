@@ -71,8 +71,8 @@ if ! ls "${PRECOMP_DIR}"/*.precomp.rds >/dev/null 2>&1; then
   echo "[ERR] no .precomp.rds files in ${PRECOMP_DIR}" >&2
   exit 1
 fi
-if [[ ! -x "${SCRIPT_DIR}/STEP_ZO_HtoM_run_one_chrom.sh" ]]; then
-  echo "[ERR] wrapper not found or not executable: ${SCRIPT_DIR}/STEP_ZO_HtoM_run_one_chrom.sh" >&2
+if [[ ! -f "${SCRIPT_DIR}/STEP_ZO_HtoM_run_one_chrom.sh" ]]; then
+  echo "[ERR] wrapper not found: ${SCRIPT_DIR}/STEP_ZO_HtoM_run_one_chrom.sh" >&2
   exit 1
 fi
 
