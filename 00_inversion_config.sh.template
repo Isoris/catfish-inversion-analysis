@@ -204,6 +204,14 @@ inv_init_dirs() {
     "${BEAGLE_DIR}" "${DOSAGE_DIR}" "${THETAPI_DIR}" "${GHSL_DIR}" \
     "${PATH1_LOCAL_PCA}" "${PATH1_REGISTRY}" "${PATH1_MDS}" "${PATH1_PRECOMP}" \
     "${PATH1_L1}" "${PATH1_L1_PLOTS}" "${PATH1_L2}" "${PATH1_L2_PLOTS}" "${PATH1_JSON}" \
-    "${PATH2_ROOT}" "${PATH3_ROOT}" \
+    "${PATH2_ROOT}" \
+    "${THETA_TSV_DIR}" "${OUT_PER_WINDOW_DIR}" "${OUT_LOCAL_PCA_DIR}" \
+    "${OUT_ENVELOPES_DIR}" "${JSON_OUT_DIR}" "${SKETCH_DIR}" \
+    "${PATH2_ROOT}/precomp" "${PATH2_ROOT}/precomp_dense" \
+    "${PATH2_ROOT}/L1_detect" "${PATH2_ROOT}/L1_plots" \
+    "${PATH2_ROOT}/L2_detect" "${PATH2_ROOT}/L2_plots" \
+    "${PATH3_ROOT}" \
+    "${GHSL_PREP_DIR}" "${GHSL_MATRICES_DIR}" "${GHSL_LOCALPCA_DIR}" \
+    "${GHSL_PRECOMP_DIR}" "${GHSL_JSON_DIR}" \
     "${SHARED_DIR}" "${LOG_DIR}"
 }
