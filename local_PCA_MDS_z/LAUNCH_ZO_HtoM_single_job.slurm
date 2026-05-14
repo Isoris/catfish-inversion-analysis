@@ -38,10 +38,6 @@ set -euo pipefail
 source ~/.bashrc
 mamba activate assembly
 
-# Capture the launcher's own dir BEFORE sourcing config (so SCRIPT_DIR_SELF
-# survives even if the central config exports SCRIPT_DIR to a stale location).
-SCRIPT_DIR_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 # ---- Central config (single explicit path, no search loop) ----------------
 CONFIG="${CONFIG:-/scratch/lt200308-agbsci/Quentin_project_KEEP_2026-02-04/inversion_localpca_v7/_shared/00_inversion_config.sh}"
 [[ -f "${CONFIG}" ]] || { echo "Missing config: ${CONFIG}" >&2; exit 1; }
@@ -49,10 +45,10 @@ echo "[launcher] central config: ${CONFIG}"
 set -a; source "${CONFIG}"; set +a
 
 # ---- Path resolution -------------------------------------------------------
-# SCRIPT_DIR ALWAYS = this launcher's own directory (it must dispatch the
-# H/I/J/K/M scripts that live next to it). The central config exports a
-# SCRIPT_DIR pointing at a different (stale) tree — override here.
-export SCRIPT_DIR="${SCRIPT_DIR_OVERRIDE:-${SCRIPT_DIR_SELF}}"
+# SCRIPT_DIR comes from the central config (set to ${REPO_ROOT}/local_PCA_MDS_z).
+# We deliberately DO NOT use $(dirname "${BASH_SOURCE[0]}") here because under
+# sbatch, BASH_SOURCE points at /var/spool/slurmd/job<JOBID>/ (where SLURM
+# copied the launcher), not at the real script location.
 export SCRATCH_ROOT="${SCRATCH_ROOT:-${BASE_DIR}/inversion_localpca_v7}"
 export PATH1_ROOT="${PATH1_ROOT:-${SCRATCH_ROOT}/local_PCA_MDS_z}"
 export PRECOMP_DIR="${PRECOMP_DIR:-${PATH1_ROOT}/04_precomp_v2/precomp}"

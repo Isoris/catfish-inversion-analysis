@@ -34,17 +34,16 @@ set -euo pipefail
 source ~/.bashrc
 mamba activate assembly
 
-# Capture launcher dir BEFORE sourcing config (so it survives the source).
-SCRIPT_DIR_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 # ---- Central config (single explicit path, no search loop) ----------------
 CONFIG="${CONFIG:-/scratch/lt200308-agbsci/Quentin_project_KEEP_2026-02-04/inversion_localpca_v7/_shared/00_inversion_config.sh}"
 [[ -f "${CONFIG}" ]] || { echo "Missing config: ${CONFIG}" >&2; exit 1; }
 echo "[launcher] central config: ${CONFIG}"
 set -a; source "${CONFIG}"; set +a
-# Force SCRIPT_DIR to this launcher's own dir AFTER the source. The central
-# config defaults SCRIPT_DIR to the Z-path scripts; we need our theta dir.
-export SCRIPT_DIR="${SCRIPT_DIR_SELF}"
+# Use SCRIPT_DIR_THETA from the central config (the canonical theta-pi
+# script location). We deliberately do NOT derive from $(dirname BASH_SOURCE)
+# because under sbatch, the launcher is copied to /var/spool/slurmd/job<ID>/
+# and BASH_SOURCE points at the spool copy, not the real repo dir.
+export SCRIPT_DIR="${SCRIPT_DIR_THETA}"
 
 # The standalone 00_theta_config.sh has been merged into the central config.
 # If it still exists in this dir, it's a leftover from before the merge and

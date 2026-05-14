@@ -39,17 +39,16 @@ set -euo pipefail
 source ~/.bashrc
 mamba activate assembly
 
-# Capture launcher dir before sourcing config (config may export SCRIPT_DIR
-# pointing at the Z path; we forcibly restore after).
-SCRIPT_DIR_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 # ---- Central config (single explicit path, no search loop) ----------------
 CONFIG="${CONFIG:-/scratch/lt200308-agbsci/Quentin_project_KEEP_2026-02-04/inversion_localpca_v7/_shared/00_inversion_config.sh}"
 [[ -f "${CONFIG}" ]] || { echo "Missing config: ${CONFIG}" >&2; exit 1; }
 echo "[launcher] central config: ${CONFIG}"
 set -a; source "${CONFIG}"; set +a
-export SCRIPT_DIR="${SCRIPT_DIR_SELF}"   # restore — central config's SCRIPT_DIR
-                                          # is the Z-path one; we need ours here
+# Use SCRIPT_DIR_GHSL from the central config (the canonical GHSL script
+# location). We deliberately do NOT derive from $(dirname BASH_SOURCE)
+# because under sbatch, the launcher is copied to /var/spool/slurmd/job<ID>/
+# and BASH_SOURCE points at the spool copy, not the real repo dir.
+export SCRIPT_DIR="${SCRIPT_DIR_GHSL}"
 
 # Required env from central config (must be exported for child R scripts).
 export OUTROOT="${PATH3_ROOT}"
