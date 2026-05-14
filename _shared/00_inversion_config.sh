@@ -51,6 +51,9 @@ export REF="${REF:-${BASE}/00-samples/fClaHyb_Gar_LG.fa}"
 export REF_FAI="${REF_FAI:-${REF}.fai}"
 export BAMLIST="${BAMLIST:-${HETDIR}/01_inputs_check/bamlist_qcpass.txt}"
 export SAMPLES_IND="${SAMPLES_IND:-${HETDIR}/01_inputs_check/samples.ind}"
+# SAMPLE_LIST is the alias the theta_pi R scripts (TR_A/B/...) read from
+# Sys.getenv(). One sample id per line, in the same order as PC_*_Ind*.
+export SAMPLE_LIST="${SAMPLE_LIST:-${SAMPLES_IND}}"
 
 # ── Input data (renamed source dirs) ─────────────────────────────────────────
 export BEAGLE_DIR="${BEAGLE_DIR:-${SCRATCH_ROOT}/01_beagle}"
@@ -151,6 +154,15 @@ export OUT_LOCAL_PCA_DIR="${OUT_LOCAL_PCA_DIR:-${PATH2_ROOT}/01_local_pca}"
 export OUT_ENVELOPES_DIR="${OUT_ENVELOPES_DIR:-${PATH2_ROOT}/03_per_chrom}"
 export JSON_OUT_DIR="${JSON_OUT_DIR:-${PATH2_ROOT}/04_atlas_json}"
 export THETA_JSON_SCHEMA_VERSION="${THETA_JSON_SCHEMA_VERSION:-1}"
+
+# θπ R-script env vars (read via Sys.getenv() inside TR_A/B/C/H/I/J).
+# Provide sensible defaults so the R scripts don't trip on NA when run
+# without first sourcing 00_theta_config.sh.
+export THETA_GRID_MODE="${THETA_GRID_MODE:-native}"      # native | dosage
+export COHORT_ID="${COHORT_ID:-catfish_226}"             # used by sketch / sparse-edges paths
+export SKETCH_DIR="${SKETCH_DIR:-${PATH2_ROOT}/03_dense_sketch}"
+export CHROM_LIST="${CHROM_LIST:-${SCRATCH_ROOT}/chr.list}"
+export N_CORES="${N_CORES:-${SLURM_CPUS_PER_TASK:-1}}"
 
 # =============================================================================
 # GHSL pipeline parameters (2026-05-14)
