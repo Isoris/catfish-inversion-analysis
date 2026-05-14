@@ -42,21 +42,14 @@ mamba activate assembly
 # Capture launcher dir before sourcing config (config may export SCRIPT_DIR
 # pointing at the Z path; we forcibly restore after).
 SCRIPT_DIR_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT_DIR="${SCRIPT_DIR_SELF}"
 
-# ---- Central config --------------------------------------------------------
-BASE_DIR="${BASE_DIR:-/scratch/lt200308-agbsci/Quentin_project_KEEP_2026-02-04}"
-for cand in \
-    "${BASE_DIR}/inversion_localpca_v7/_shared/00_inversion_config.sh" \
-    "${BASE_DIR}/catfish-inversion-analysis/catfish-inversion-analysis/_shared/00_inversion_config.sh" \
-    "${BASE_DIR}/catfish-inversion-analysis/_shared/00_inversion_config.sh"; do
-  if [[ -f "$cand" ]]; then CONFIG_CENTRAL="$cand"; break; fi
-done
-[[ -n "${CONFIG_CENTRAL:-}" ]] || { echo "[ERR] central config not found" >&2; exit 1; }
-echo "[launcher] central config: ${CONFIG_CENTRAL}"
-set -a; source "${CONFIG_CENTRAL}"; set +a
-SCRIPT_DIR="${SCRIPT_DIR_SELF}"   # restore — the central config's SCRIPT_DIR
-                                   # is the Z-path one; we need ours here
+# ---- Central config (single explicit path, no search loop) ----------------
+CONFIG="${CONFIG:-/scratch/lt200308-agbsci/Quentin_project_KEEP_2026-02-04/inversion_localpca_v7/_shared/00_inversion_config.sh}"
+[[ -f "${CONFIG}" ]] || { echo "Missing config: ${CONFIG}" >&2; exit 1; }
+echo "[launcher] central config: ${CONFIG}"
+set -a; source "${CONFIG}"; set +a
+export SCRIPT_DIR="${SCRIPT_DIR_SELF}"   # restore — central config's SCRIPT_DIR
+                                          # is the Z-path one; we need ours here
 
 # Required env from central config (must be exported for child R scripts).
 export OUTROOT="${PATH3_ROOT}"

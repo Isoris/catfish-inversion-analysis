@@ -34,39 +34,21 @@ set -euo pipefail
 source ~/.bashrc
 mamba activate assembly
 
-# ---- Configs (mirror LAUNCH_TR_theta_pi.slurm) -----------------------------
-BASE_DIR="${BASE_DIR:-/scratch/lt200308-agbsci/Quentin_project_KEEP_2026-02-04}"
-# Capture this launcher's directory BEFORE sourcing any config. The central
-# config may export a SCRIPT_DIR pointing at a different (older) repo
-# location — keep SCRIPT_DIR_SELF as the unclobbered ground truth, then
-# force SCRIPT_DIR back to SCRIPT_DIR_SELF after the source.
+# Capture launcher dir BEFORE sourcing config (so it survives the source).
 SCRIPT_DIR_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT_DIR="${SCRIPT_DIR_SELF}"
 
-for cand in \
-    "${BASE_DIR}/inversion_localpca_v7/_shared/00_inversion_config.sh" \
-    "${BASE_DIR}/inversion-popgen-toolkit/00_inversion_config.sh" \
-    "${BASE_DIR}/inversion-popgen-toolkit/inversion_modules/00_inversion_config.sh" \
-    "${BASE_DIR}/inversion_codebase_v8.5/00_inversion_config.sh"; do
-  if [[ -f "$cand" ]]; then CONFIG_CENTRAL="$cand"; break; fi
-done
-[[ -n "${CONFIG_CENTRAL:-}" ]] || { echo "no central config" >&2; exit 1; }
-echo "[launcher] central config: ${CONFIG_CENTRAL}"
-set -a; source "${CONFIG_CENTRAL}"; set +a
-# Forcibly restore SCRIPT_DIR to this launcher's own dir AFTER the source —
-# the central config's default SCRIPT_DIR points at the Z-path scripts.
-SCRIPT_DIR="${SCRIPT_DIR_SELF}"
+# ---- Central config (single explicit path, no search loop) ----------------
+CONFIG="${CONFIG:-/scratch/lt200308-agbsci/Quentin_project_KEEP_2026-02-04/inversion_localpca_v7/_shared/00_inversion_config.sh}"
+[[ -f "${CONFIG}" ]] || { echo "Missing config: ${CONFIG}" >&2; exit 1; }
+echo "[launcher] central config: ${CONFIG}"
+set -a; source "${CONFIG}"; set +a
+# Force SCRIPT_DIR to this launcher's own dir AFTER the source. The central
+# config defaults SCRIPT_DIR to the Z-path scripts; we need our theta dir.
+export SCRIPT_DIR="${SCRIPT_DIR_SELF}"
 
-# 2026-05-14: the standalone 00_theta_config.sh was merged into the
-# central config (the "θπ pipeline parameters" section). The launcher no
-# longer needs to source a separate file. If you have a customised
-# 00_theta_config.sh in this dir, you can still pre-source it before
-# calling sbatch — its values will be picked up via the ${VAR:-default}
-# pattern in the central config.
-if [[ -f "${SCRIPT_DIR}/00_theta_config.sh" ]]; then
-  echo "[launcher] (note) standalone theta config exists at ${SCRIPT_DIR}/00_theta_config.sh"
-  echo "[launcher] (note) it is NOT sourced automatically; central config covers everything."
-fi
+# The standalone 00_theta_config.sh has been merged into the central config.
+# If it still exists in this dir, it's a leftover from before the merge and
+# is no longer sourced automatically.
 
 if declare -F inv_init_dirs >/dev/null; then inv_init_dirs; fi
 mkdir -p "${OUTROOT}" "${JSON_OUT_DIR}" "${LOG_DIR:-${OUTROOT}/logs}" logs
@@ -81,8 +63,7 @@ TR_STEPS="${SCRIPT_DIR}/steps"
 export TR_STEPS
 export OUTROOT JSON_OUT_DIR LOG_DIR
 export COARSE_PESTPG_SCALE DENSE_PESTPG_SCALE
-RSCRIPT="${RSCRIPT_BIN:-Rscript}"
-export RSCRIPT
+# RSCRIPT removed; use ${RSCRIPT_BIN} directly
 
 # ---- Limit BLAS threads inside each worker so we don't oversubscribe ------
 # (64 CPU total / 16 workers = 4 BLAS threads per worker)
@@ -132,55 +113,55 @@ fi
 # COARSE pass
 export PESTPG_SCALE="${COARSE_PESTPG_SCALE}"
 echo "[$(date)] [${CHROM}] === A coarse @ ${PESTPG_SCALE} ==="
-"${RSCRIPT}" "${TR_STEPS}/STEP_TR_A_compute_theta_matrices.R" --chrom "${CHROM}"
+"${RSCRIPT_BIN}" "${TR_STEPS}/STEP_TR_A_compute_theta_matrices.R" --chrom "${CHROM}"
 
 echo "[$(date)] [${CHROM}] === B coarse ==="
-"${RSCRIPT}" "${TR_STEPS}/STEP_TR_B_local_pca_compute.R"      --chrom "${CHROM}"
+"${RSCRIPT_BIN}" "${TR_STEPS}/STEP_TR_B_local_pca_compute.R"      --chrom "${CHROM}"
 
 echo "[$(date)] [${CHROM}] === C coarse (mode=full) ==="
-"${RSCRIPT}" "${TR_STEPS}/STEP_TR_C_mds_compute.R"            --chrom "${CHROM}" --mode full
+"${RSCRIPT_BIN}" "${TR_STEPS}/STEP_TR_C_mds_compute.R"            --chrom "${CHROM}" --mode full
 
 echo "[$(date)] [${CHROM}] === D detect_L1 ==="
-"${RSCRIPT}" "${TR_STEPS}/STEP_TR_D_detect_L1.R" \
+"${RSCRIPT_BIN}" "${TR_STEPS}/STEP_TR_D_detect_L1.R" \
   --precomp_dir "${OUTROOT}/precomp" --chr "${CHROM}" --outdir "${OUTROOT}/L1_detect"
 
 echo "[$(date)] [${CHROM}] === E plot_L1 ==="
-"${RSCRIPT}" "${TR_STEPS}/STEP_TR_E_plot_L1.R" \
+"${RSCRIPT_BIN}" "${TR_STEPS}/STEP_TR_E_plot_L1.R" \
   --precomp_dir "${OUTROOT}/precomp" --L1_dir "${OUTROOT}/L1_detect" \
   --chr "${CHROM}" --outdir "${OUTROOT}/L1_plots"
 
 echo "[$(date)] [${CHROM}] === F detect_L2 ==="
-"${RSCRIPT}" "${TR_STEPS}/STEP_TR_F_detect_L2.R" \
+"${RSCRIPT_BIN}" "${TR_STEPS}/STEP_TR_F_detect_L2.R" \
   --precomp_dir "${OUTROOT}/precomp" --L1_dir "${OUTROOT}/L1_detect" \
   --chr "${CHROM}" --outdir "${OUTROOT}/L2_detect"
 
 echo "[$(date)] [${CHROM}] === G plot_L2 ==="
-"${RSCRIPT}" "${TR_STEPS}/STEP_TR_G_plot_L2.R" \
+"${RSCRIPT_BIN}" "${TR_STEPS}/STEP_TR_G_plot_L2.R" \
   --precomp_dir "${OUTROOT}/precomp" --L1_dir "${OUTROOT}/L1_detect" \
   --L2_dir "${OUTROOT}/L2_detect" --chr "${CHROM}" --outdir "${OUTROOT}/L2_plots"
 
 # DENSE pass
 export PESTPG_SCALE="${DENSE_PESTPG_SCALE}"
 echo "[$(date)] [${CHROM}] === A dense @ ${PESTPG_SCALE} ==="
-"${RSCRIPT}" "${TR_STEPS}/STEP_TR_A_compute_theta_matrices.R" --chrom "${CHROM}"
+"${RSCRIPT_BIN}" "${TR_STEPS}/STEP_TR_A_compute_theta_matrices.R" --chrom "${CHROM}"
 
 echo "[$(date)] [${CHROM}] === B dense ==="
-"${RSCRIPT}" "${TR_STEPS}/STEP_TR_B_local_pca_compute.R"      --chrom "${CHROM}"
+"${RSCRIPT_BIN}" "${TR_STEPS}/STEP_TR_B_local_pca_compute.R"      --chrom "${CHROM}"
 
 echo "[$(date)] [${CHROM}] === C dense (mode=local, banded) ==="
-"${RSCRIPT}" "${TR_STEPS}/STEP_TR_C_mds_compute.R" \
+"${RSCRIPT_BIN}" "${TR_STEPS}/STEP_TR_C_mds_compute.R" \
   --chrom "${CHROM}" --mode local --sim-band-half 100 --out_subdir precomp_dense
 
 # MERGE pass
 echo "[$(date)] [${CHROM}] === H classify_carriers ==="
-"${RSCRIPT}" "${TR_STEPS}/STEP_TR_H_classify_carriers.R" --chr "${CHROM}"
+"${RSCRIPT_BIN}" "${TR_STEPS}/STEP_TR_H_classify_carriers.R" --chr "${CHROM}"
 
 echo "[$(date)] [${CHROM}] === I cusum_per_carrier ==="
-"${RSCRIPT}" "${TR_STEPS}/STEP_TR_I_cusum_per_carrier.R" \
+"${RSCRIPT_BIN}" "${TR_STEPS}/STEP_TR_I_cusum_per_carrier.R" \
   --chr "${CHROM}" --lib "${TR_STEPS}/lib_persample_cusum.R"
 
 echo "[$(date)] [${CHROM}] === J atlas_json ==="
-"${RSCRIPT}" "${TR_STEPS}/STEP_TR_J_atlas_json.R" \
+"${RSCRIPT_BIN}" "${TR_STEPS}/STEP_TR_J_atlas_json.R" \
   --chr                 "${CHROM}" \
   --coarse_precomp_dir  "${OUTROOT}/precomp" \
   --dense_precomp_dir   "${OUTROOT}/precomp_dense" \
