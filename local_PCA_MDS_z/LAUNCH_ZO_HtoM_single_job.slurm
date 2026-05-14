@@ -53,11 +53,13 @@ echo "[launcher] central config: ${CONFIG_CENTRAL}"
 set -a; source "${CONFIG_CENTRAL}"; set +a
 
 # ---- Path resolution -------------------------------------------------------
-# Allow each variable to be env-overridden; otherwise default to the canonical
-# layout. SCRIPT_DIR points at the dir containing the H/I/J/K/M R scripts —
-# that's THIS launcher's own dir (so the nested-repo and outer-repo variants
-# both work without surprise).
-export SCRIPT_DIR="${SCRIPT_DIR:-${SCRIPT_DIR_SELF}}"
+# SCRIPT_DIR ALWAYS = this launcher's own directory, because the H/I/J/K/M
+# scripts must live next to the launcher (they're tightly coupled). The
+# central config may also export a SCRIPT_DIR pointing at a different (older)
+# repo location — we deliberately override that here. Use SCRIPT_DIR_OVERRIDE
+# in the rare case you want to dispatch a launcher at a different script
+# tree (e.g., re-running an old wrapper against new data).
+export SCRIPT_DIR="${SCRIPT_DIR_OVERRIDE:-${SCRIPT_DIR_SELF}}"
 export SCRATCH_ROOT="${SCRATCH_ROOT:-${BASE_DIR}/inversion_localpca_v7}"
 export PATH1_ROOT="${PATH1_ROOT:-${SCRATCH_ROOT}/local_PCA_MDS_z}"
 export PRECOMP_DIR="${PRECOMP_DIR:-${PATH1_ROOT}/04_precomp_v2/precomp}"

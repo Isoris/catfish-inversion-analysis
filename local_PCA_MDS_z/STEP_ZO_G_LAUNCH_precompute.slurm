@@ -44,20 +44,27 @@ MDS_PREFIX="${MDS_PREFIX:-${SCRATCH_ROOT}/path_localpca_zblocks/03_mds/inversion
 OUTDIR="${OUTDIR:-${SCRATCH_ROOT}/path_localpca_zblocks/04_precomp}"
 DOSAGE_DIR="${DOSAGE_DIR:-${SCRATCH_ROOT}/02_dosage_sites}"
 
-# ZO_G reads per-chrom MDS results from <OUTDIR>/tmp/<chr>.mds_perchr.rds
-# (produced by ZO_E). Sanity-check that ZO_E array tasks have written outputs.
-ZO_E_TMPDIR="${OUTDIR}/tmp"
-if [[ ! -d "${ZO_E_TMPDIR}" ]] || [[ -z $(find "${ZO_E_TMPDIR}" -maxdepth 1 -name "*.mds_perchr.rds" -print -quit) ]]; then
-  echo "[G] missing ${ZO_E_TMPDIR}/<chr>.mds_perchr.rds — run ZO_E first" >&2
+# ZO_G reads per-chrom MDS results from <OUTDIR>/mds_perchr/<chr>.mds_perchr.rds
+# (produced by ZO_E). Older runs wrote to <OUTDIR>/tmp/ — that's the back-compat
+# fallback (handled inside ZO_G). Sanity-check at least one of those exists.
+ZO_E_DIR=""
+for cand in "${OUTDIR}/mds_perchr" "${OUTDIR}/tmp"; do
+  if [[ -d "$cand" ]] && find "$cand" -maxdepth 1 -name "*.mds_perchr.rds" -print -quit | grep -q .; then
+    ZO_E_DIR="$cand"; break
+  fi
+done
+if [[ -z "$ZO_E_DIR" ]]; then
+  echo "[G] missing <chr>.mds_perchr.rds in ${OUTDIR}/{mds_perchr,tmp}/ — run ZO_E first" >&2
   exit 1
 fi
+echo "[G] using per-chrom MDS dir: ${ZO_E_DIR}"
 
 mkdir -p "${OUTDIR}"
 
 cat <<EOF
 ================================================================
   STEP_ZO_G precompute
-  ZO_E tmpdir   : ${ZO_E_TMPDIR}
+  ZO_E perchr   : ${ZO_E_DIR}
   Out dir       : ${OUTDIR}
   NN_SIM_SCALES : ${NN_SIM_SCALES:-20,40,80,120,160,200,240,320}
   Cores         : ${SLURM_CPUS_PER_TASK:-1}

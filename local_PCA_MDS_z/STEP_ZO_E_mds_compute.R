@@ -10,16 +10,16 @@
 #   2. computes the lostruct distance matrix `dmat` (focal x focal),
 #   3. runs `cmdscale(k = MDS_DIMS)` on dmat,
 #   4. computes robust per-axis z scores on the focal MDS coords,
-#   5. writes the per-chrom result to <outdir>/tmp/<chr>.mds_perchr.rds.
+#   5. writes the per-chrom result to <outdir>/mds_perchr/<chr>.mds_perchr.rds.
 #
 # Pipeline position:
 #   ZO_C/D (per-window PCA + global IDs)  ->  ZO_E (this script)
-#       ->  ZO_G (precomp + sim_mats, reads tmp/ directly)
+#       ->  ZO_G (precomp + sim_mats, reads mds_perchr/ directly)
 #       ->  ZO_H / ZO_J (L1 / L2 stripe detection on sim_mat)
 #
 # Inputs:
 #   --rds_dir    <dir>   directory of <chr>.window_pca.rds from ZO_C/D
-#   --outdir     <dir>   output root; this stage writes to <outdir>/tmp/
+#   --outdir     <dir>   output root; this stage writes to <outdir>/mds_perchr/
 #   --outprefix  <s>     filename stem (default 'inversion_localpca')
 #   --focal_chr  <name>  chromosome under analysis for this array task
 #   [--npc        4]     eigvec count per window (must match ZO_C!)
@@ -27,8 +27,11 @@
 #   [--z_thresh   3.0]   per-axis Z #1 threshold (descriptive only)
 #   [--mds_mode / --seed] legacy chunked-mode flags, silently ignored.
 #
-# Output (in <outdir>/tmp/):
+# Output (in <outdir>/mds_perchr/):
 #   <focal_chr>.mds_perchr.rds   list($out_dt, $dmat, $mds, $n_focal)
+#
+# Backward compat: ZO_G falls back to <outdir>/tmp/ if mds_perchr/ is absent,
+# so data from older runs continues to work without renaming.
 # =============================================================================
 
 suppressPackageStartupMessages({
@@ -88,14 +91,20 @@ if (is.null(rds_dir) || is.null(outdir) || is.null(FOCAL_CHR)) {
   stop("Usage: Rscript STEP_ZO_E_mds_compute.R --rds_dir <dir> --outdir <dir> --focal_chr <chr> ...")
 }
 
-tmpdir <- file.path(outdir, "tmp")
-dir.create(tmpdir, recursive = TRUE, showWarnings = FALSE)
+# Per-chrom MDS results land here. Used to be called "tmp/" back when ZO_F
+# merged these into a single inversion_localpca.mds.rds and downstream
+# consumed only the merged file. ZO_F is gone now — these per-chrom RDS
+# files ARE the final ZO_E output, consumed directly by ZO_G. The new name
+# reflects that. ZO_G falls back to "tmp/" if "mds_perchr/" is absent, so
+# data from older runs (still in tmp/) loads without renaming.
+mds_perchr_dir <- file.path(outdir, "mds_perchr")
+dir.create(mds_perchr_dir, recursive = TRUE, showWarnings = FALSE)
 
 # =============================================================================
 # SKIP-IF-DONE
 # =============================================================================
 
-rds_out <- file.path(tmpdir, paste0(FOCAL_CHR, ".mds_perchr.rds"))
+rds_out <- file.path(mds_perchr_dir, paste0(FOCAL_CHR, ".mds_perchr.rds"))
 
 if (file.exists(rds_out)) {
   message("[ZO_E] ", FOCAL_CHR, ": output already exists, skipping")
@@ -423,7 +432,7 @@ meta_row <- data.table(
   elapsed_sec     = elapsed,
   timestamp       = format(Sys.time(), "%Y-%m-%d %H:%M:%S")
 )
-fwrite(meta_row, file.path(tmpdir, paste0(FOCAL_CHR, ".metadata.tsv")), sep = "\t")
+fwrite(meta_row, file.path(mds_perchr_dir, paste0(FOCAL_CHR, ".metadata.tsv")), sep = "\t")
 
 message("")
 message("[DONE] ZO_E — ", FOCAL_CHR, ": ", nrow(out_chr),

@@ -36,7 +36,12 @@ mamba activate assembly
 
 # ---- Configs (mirror LAUNCH_TR_theta_pi.slurm) -----------------------------
 BASE_DIR="${BASE_DIR:-/scratch/lt200308-agbsci/Quentin_project_KEEP_2026-02-04}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Capture this launcher's directory BEFORE sourcing any config. The central
+# config may export a SCRIPT_DIR pointing at a different (older) repo
+# location — keep SCRIPT_DIR_SELF as the unclobbered ground truth, then
+# force SCRIPT_DIR back to SCRIPT_DIR_SELF after the source.
+SCRIPT_DIR_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="${SCRIPT_DIR_SELF}"
 
 for cand in \
     "${BASE_DIR}/inversion_localpca_v7/_shared/00_inversion_config.sh" \
@@ -48,6 +53,10 @@ done
 [[ -n "${CONFIG_CENTRAL:-}" ]] || { echo "no central config" >&2; exit 1; }
 echo "[launcher] central config: ${CONFIG_CENTRAL}"
 set -a; source "${CONFIG_CENTRAL}"; set +a
+# Forcibly restore SCRIPT_DIR after the source — the central config's
+# SCRIPT_DIR points at the Z-path repo, which is not where THIS launcher's
+# theta scripts live.
+SCRIPT_DIR="${SCRIPT_DIR_SELF}"
 
 for cand in \
     "${SCRIPT_DIR}/00_theta_config.sh" \
