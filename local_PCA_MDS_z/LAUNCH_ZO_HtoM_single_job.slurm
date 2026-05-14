@@ -2,8 +2,8 @@
 #SBATCH -p compute
 #SBATCH -A lt200308
 #SBATCH -N 1
-#SBATCH --cpus-per-task=64
-#SBATCH --mem=128G
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=120G
 #SBATCH -t 2:00:00
 #SBATCH -J inv_HtoM_all
 #SBATCH -o logs/inv_HtoM_all.%j.out
@@ -13,7 +13,7 @@
 # LAUNCH_ZO_HtoM_single_job.slurm
 #
 # Runs H/I/J/K/M (L1/L2 detection + plots + atlas JSON) for ALL chromosomes
-# inside a SINGLE SLURM job, fanned out N_PARALLEL=16 at a time via xargs.
+# inside a SINGLE SLURM job, fanned out N_PARALLEL=4 at a time via xargs.
 # Same pattern as LAUNCH_TR_theta_pi_single_job.slurm — use when SLURM
 # arrays aren't available or when you got kicked off the login node mid-run.
 #
@@ -22,12 +22,15 @@
 # [WARN] if missing, completing H→K cleanly regardless.
 #
 # Why these sizes?
-#   --cpus-per-task=64 / --mem=128G / -t 2:00:00
-#   N_PARALLEL=16 (each worker pinned to 4 BLAS threads, 64/16=4)
-#   Per-chrom cost ~ 2-3 min → 28 chroms / 16 parallel ≈ 5-10 min wall
+#   --cpus-per-task=16 / --mem=120G / -t 2:00:00
+#   N_PARALLEL=4 (each worker pinned to 4 BLAS threads, 16/4=4, 30 GB each)
+#   Larger memory budget per worker — the previous 16-way/8-way settings
+#   blew past --mem=128G on the biggest chrom's atlas-JSON build (ZO_M
+#   loads 5 sim_mats simultaneously). 30 GB/worker has comfortable headroom.
+#   Per-chrom cost ~ 2-3 min → 28 chroms / 4 parallel ≈ 15-20 min wall
 #
 # Tune:
-#   N_PARALLEL=12 sbatch LAUNCH_ZO_HtoM_single_job.slurm
+#   N_PARALLEL=8 sbatch LAUNCH_ZO_HtoM_single_job.slurm   (if you bump --mem too)
 #   PRECOMP_DIR=/some/other/04_precomp_vN/precomp sbatch ...
 #
 # Submit:
@@ -61,7 +64,7 @@ export OPENBLAS_NUM_THREADS=4
 export MKL_NUM_THREADS=4
 export VECLIB_MAXIMUM_THREADS=4
 
-N_PARALLEL="${N_PARALLEL:-16}"
+N_PARALLEL="${N_PARALLEL:-4}"
 
 # ---- Logs ------------------------------------------------------------------
 mkdir -p logs "${PATH1_ROOT}/logs_htom"
