@@ -53,20 +53,20 @@ done
 [[ -n "${CONFIG_CENTRAL:-}" ]] || { echo "no central config" >&2; exit 1; }
 echo "[launcher] central config: ${CONFIG_CENTRAL}"
 set -a; source "${CONFIG_CENTRAL}"; set +a
-# Forcibly restore SCRIPT_DIR after the source — the central config's
-# SCRIPT_DIR points at the Z-path repo, which is not where THIS launcher's
-# theta scripts live.
+# Forcibly restore SCRIPT_DIR to this launcher's own dir AFTER the source —
+# the central config's default SCRIPT_DIR points at the Z-path scripts.
 SCRIPT_DIR="${SCRIPT_DIR_SELF}"
 
-for cand in \
-    "${SCRIPT_DIR}/00_theta_config.sh" \
-    "${INVDIR:-${BASE_DIR}/inversion-popgen-toolkit/inversion_modules}/phase_2_discovery/2f_theta_discovery/00_theta_config.sh" \
-    "${BASE_DIR}/inversion_codebase_v8.5/phase_2_discovery/2f_theta_discovery/00_theta_config.sh"; do
-  if [[ -f "$cand" ]]; then CONFIG_THETA="$cand"; break; fi
-done
-[[ -n "${CONFIG_THETA:-}" ]] || { echo "no theta config" >&2; exit 1; }
-echo "[launcher] theta config:   ${CONFIG_THETA}"
-set -a; source "${CONFIG_THETA}"; set +a
+# 2026-05-14: the standalone 00_theta_config.sh was merged into the
+# central config (the "θπ pipeline parameters" section). The launcher no
+# longer needs to source a separate file. If you have a customised
+# 00_theta_config.sh in this dir, you can still pre-source it before
+# calling sbatch — its values will be picked up via the ${VAR:-default}
+# pattern in the central config.
+if [[ -f "${SCRIPT_DIR}/00_theta_config.sh" ]]; then
+  echo "[launcher] (note) standalone theta config exists at ${SCRIPT_DIR}/00_theta_config.sh"
+  echo "[launcher] (note) it is NOT sourced automatically; central config covers everything."
+fi
 
 if declare -F inv_init_dirs >/dev/null; then inv_init_dirs; fi
 mkdir -p "${OUTROOT}" "${JSON_OUT_DIR}" "${LOG_DIR:-${OUTROOT}/logs}" logs

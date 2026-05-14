@@ -112,6 +112,46 @@ export Z_THRESH_DEFAULT="${Z_THRESH_DEFAULT:-3}"
 # L1/L2/atlas (was 8; the others had zero readers and 1.2 GB/chrom of disk).
 export NN_SIM_SCALES="${NN_SIM_SCALES:-40,80,160,320}"
 
+# =============================================================================
+# θπ pipeline parameters (merged from the old 00_theta_config.sh, 2026-05-14)
+# =============================================================================
+# OUTROOT is the legacy alias TR_A/B/C scripts read for the theta_pi output
+# tree. Points at PATH2_ROOT.
+export OUTROOT="${OUTROOT:-${PATH2_ROOT}}"
+
+# pestPG scales — coarse for L1/L2 boundary discovery, dense for per-sample
+# CUSUM inside called L2 envelopes.
+export PESTPG_SCALE="${PESTPG_SCALE:-win10000.step2000}"
+export PESTPG_GLOB="${PESTPG_GLOB:-*.${PESTPG_SCALE}.pestPG}"
+export COARSE_PESTPG_SCALE="${COARSE_PESTPG_SCALE:-win50000.step10000}"
+export DENSE_PESTPG_SCALE="${DENSE_PESTPG_SCALE:-win10000.step2000}"
+export SCALE_LABEL="${SCALE_LABEL:-${PESTPG_SCALE}}"
+export WIN_BP="${WIN_BP:-10000}"
+export STEP_BP="${STEP_BP:-2000}"
+
+# Intermediate per-sample × per-window matrices land in PATH2_ROOT/01_local_pca.
+export THETA_TSV_DIR="${THETA_TSV_DIR:-${PATH2_ROOT}/01_local_pca}"
+
+# Optional: dosage-grid window BED (links to Z path's 01_local_pca for
+# joint-grid atlas rendering when needed).
+export DOSAGE_WIN_BED_DIR="${DOSAGE_WIN_BED_DIR:-${PATH1_LOCAL_PCA}}"
+
+# θπ local-PCA + sim_mat / L1/L2 thresholds.
+export LOCAL_PCA_PAD="${LOCAL_PCA_PAD:-1}"
+export LOCAL_PCA_NPC="${LOCAL_PCA_NPC:-4}"
+export SIM_MAT_METRIC="${SIM_MAT_METRIC:-abs_cosine}"
+export CONCORD_THR="${CONCORD_THR:-0.85}"
+export MERGE_THR="${MERGE_THR:-0.85}"
+export SILHOUETTE_MIN="${SILHOUETTE_MIN:-0.45}"
+export ENV_MIN_WINDOWS="${ENV_MIN_WINDOWS:-5}"
+
+# θπ output sub-trees + atlas JSON.
+export OUT_PER_WINDOW_DIR="${OUT_PER_WINDOW_DIR:-${PATH2_ROOT}/01_local_pca}"
+export OUT_LOCAL_PCA_DIR="${OUT_LOCAL_PCA_DIR:-${PATH2_ROOT}/01_local_pca}"
+export OUT_ENVELOPES_DIR="${OUT_ENVELOPES_DIR:-${PATH2_ROOT}/03_per_chrom}"
+export JSON_OUT_DIR="${JSON_OUT_DIR:-${PATH2_ROOT}/04_atlas_json}"
+export THETA_JSON_SCHEMA_VERSION="${THETA_JSON_SCHEMA_VERSION:-1}"
+
 # ── Helper functions ─────────────────────────────────────────────────────────
 inv_timestamp() { date '+%F %T'; }
 inv_log()  { echo "[$(inv_timestamp)] [INV] $*"; }
