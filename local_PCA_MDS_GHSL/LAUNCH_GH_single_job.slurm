@@ -21,8 +21,18 @@
 #   A    : STEP_GH_A_compute_matrices.R   (divergence matrices, multi-scale)
 #   B    : STEP_GH_B_local_pca_compute.R  (per-window local PCA, scale s50)
 #   C    : STEP_GH_C_mds_compute.R        (MDS + sim_mat + NN smoothing)
-#   D    : STEP_GH_D_merge_registry.R     (per-chrom registry — runs once
-#                                          after all chroms finish)
+#   D    : STEP_TR_D_detect_L1.R          (L1 boundaries on GHSL sim_mat_nn80)
+#   E    : STEP_TR_E_plot_L1.R            (L1 overlay PDF)
+#   F    : STEP_TR_F_detect_L2.R          (L2 boundaries inside each L1)
+#   G    : STEP_TR_G_plot_L2.R            (L2 overlay PDF)
+#   J    : STEP_GH_J_atlas_json.R         (slim atlas JSON: sim_mat + L1/L2;
+#                                          no carriers / no CUSUM — GHSL has
+#                                          no dense per-sample track yet)
+#   K    : STEP_GH_D_merge_registry.R     (genome-wide registry — runs once
+#                                          after all per-chrom finish)
+#
+# TR_D/E/F/G are pipeline-agnostic and operate on any precomp + sim_mats with
+# the standard window_dt schema, so we reuse them against GHSL outputs.
 #
 # Auto-detects which chroms have postprocess data in
 # ${GHSL_POSTPROCESS_DIR}/<chr>/<sample>/ — useful while Clair3 is still
@@ -57,12 +67,18 @@ export OUTROOT="${PATH3_ROOT}"
 # (02_local_pca by default), so bridge the two names here.
 export OUT_GH_LOCAL_PCA_DIR="${GHSL_LOCALPCA_DIR}"
 export GHSL_POSTPROCESS_DIR GHSL_PREP_DIR GHSL_MATRICES_DIR \
-       GHSL_LOCALPCA_DIR GHSL_PRECOMP_DIR GHSL_SCALES \
+       GHSL_LOCALPCA_DIR GHSL_PRECOMP_DIR \
+       GHSL_L1_DIR GHSL_L1_PLOTS_DIR GHSL_L2_DIR GHSL_L2_PLOTS_DIR GHSL_JSON_DIR \
+       GHSL_SCALES \
        GHSL_PCA_SCALE_FULL GHSL_PCA_SCALE_DENSE \
-       PRECOMP_DIR SAMPLES_IND RSCRIPT_BIN SCRIPT_DIR
+       PRECOMP_DIR SAMPLES_IND RSCRIPT_BIN SCRIPT_DIR SCRIPT_DIR_THETA
 
 mkdir -p logs "${GHSL_PREP_DIR}" "${GHSL_MATRICES_DIR}" "${GHSL_LOCALPCA_DIR}" \
-         "${GHSL_PRECOMP_DIR}" "${PATH3_ROOT}/logs_perchrom"
+         "${GHSL_PRECOMP_DIR}" \
+         "${GHSL_L1_DIR}" "${GHSL_L1_PLOTS_DIR}" \
+         "${GHSL_L2_DIR}" "${GHSL_L2_PLOTS_DIR}" \
+         "${GHSL_JSON_DIR}" \
+         "${PATH3_ROOT}/logs_perchrom"
 
 # ---- BLAS thread pinning ---------------------------------------------------
 # 64 CPU / 8 workers = 8 BLAS threads per worker.
@@ -105,7 +121,7 @@ echo "  Chroms:"
 echo "${CHROMS}" | awk '{print "    "$0}'
 echo "================================================================"
 
-# ---- Per-chrom pipeline (PREP -> A -> B -> C) ------------------------------
+# ---- Per-chrom pipeline (PREP -> A -> B -> C -> D -> E -> F -> G -> J) -----
 PERCHROM_SCRIPT="$(mktemp /tmp/run_ghsl_chr_XXXXXX.sh)"
 chmod +x "${PERCHROM_SCRIPT}"
 trap "rm -f ${PERCHROM_SCRIPT}" EXIT
@@ -119,10 +135,12 @@ exec >"${LOG}" 2>&1
 
 echo "[$(date)] [${CHROM}] START"
 
-# Skip-if-done: if precomp.rds already exists, this chrom is finished.
-FINAL_PRECOMP="${GHSL_PRECOMP_DIR}/${CHROM}.ghsl_precomp.rds"
-if [[ -s "${FINAL_PRECOMP}" ]]; then
-  echo "[$(date)] [${CHROM}] SKIP — final precomp already present: ${FINAL_PRECOMP}"
+# Skip-if-done: if the final atlas JSON exists, this chrom has run all the
+# way through GH_C + L1/L2 detection + GH_J. Earlier outputs are reused
+# automatically by the individual step skip-checks.
+FINAL_JSON="${GHSL_JSON_DIR}/${CHROM}/${CHROM}_phase3_ghsl.json"
+if [[ -s "${FINAL_JSON}" ]]; then
+  echo "[$(date)] [${CHROM}] SKIP — final atlas JSON already present: ${FINAL_JSON}"
   exit 0
 fi
 
@@ -155,11 +173,74 @@ echo "[$(date)] [${CHROM}] === B local_pca ==="
   --chrom        "${CHROM}"
 
 # C — MDS + sim_mat + NN smoothing (mode full)
-echo "[$(date)] [${CHROM}] === C mds (mode=full) ==="
-"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_GH_C_mds_compute.R" \
-  --chrom      "${CHROM}" \
-  --mode       full \
-  --out_subdir "03_precomp"
+if [[ ! -s "${GHSL_PRECOMP_DIR}/${CHROM}.ghsl_precomp.rds" ]]; then
+  echo "[$(date)] [${CHROM}] === C mds (mode=full) ==="
+  "${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_GH_C_mds_compute.R" \
+    --chrom      "${CHROM}" \
+    --mode       full \
+    --out_subdir "03_precomp"
+else
+  echo "[$(date)] [${CHROM}] precomp already done, skipping C"
+fi
+
+# TR scripts (D-G) operate directly on a precomp + sim_mats and are
+# pipeline-agnostic — we point them at the GHSL precomp.
+GHSL_PRECOMP_F="${GHSL_PRECOMP_DIR}/${CHROM}.ghsl_precomp.rds"
+SIM_NN80="${GHSL_PRECOMP_DIR}/sim_mats/${CHROM}.sim_mat_nn80.rds"
+SIM_NN40="${GHSL_PRECOMP_DIR}/sim_mats/${CHROM}.sim_mat_nn40.rds"
+
+# D — detect L1 boundaries
+echo "[$(date)] [${CHROM}] === D detect_L1 ==="
+"${RSCRIPT_BIN}" "${SCRIPT_DIR_THETA}/STEP_TR_D_detect_L1.R" \
+  --precomp "${GHSL_PRECOMP_F}" --sim_mat "${SIM_NN80}" \
+  --chr "${CHROM}" --outdir "${GHSL_L1_DIR}" \
+  --boundary_scan TRUE \
+  --boundary_validator_mode grow \
+  --boundary_W 5 --boundary_offset 5 --boundary_min_dist 30
+
+# E — plot L1
+echo "[$(date)] [${CHROM}] === E plot_L1 ==="
+"${RSCRIPT_BIN}" "${SCRIPT_DIR_THETA}/STEP_TR_E_plot_L1.R" \
+  --precomp "${GHSL_PRECOMP_F}" --sim_mat "${SIM_NN80}" \
+  --catalogue  "${GHSL_L1_DIR}/${CHROM}.L1_envelopes.tsv" \
+  --boundaries "${GHSL_L1_DIR}/${CHROM}.L1_boundaries.tsv" \
+  --chr "${CHROM}" --outdir "${GHSL_L1_PLOTS_DIR}" \
+  --toggle_L1 yes --boundary_filter stable
+
+# F — detect L2 boundaries (inside each L1 envelope)
+echo "[$(date)] [${CHROM}] === F detect_L2 ==="
+"${RSCRIPT_BIN}" "${SCRIPT_DIR_THETA}/STEP_TR_F_detect_L2.R" \
+  --precomp "${GHSL_PRECOMP_F}" --sim_mat "${SIM_NN40}" \
+  --l1_catalogue "${GHSL_L1_DIR}/${CHROM}.L1_envelopes.tsv" \
+  --chr "${CHROM}" --outdir "${GHSL_L2_DIR}" \
+  --boundary_scan TRUE \
+  --boundary_validator_mode grow \
+  --quadrant_validator yes \
+  --weak_demote_score 0 \
+  --quad_rescue_max_grow_z 1.5 \
+  --quad_demote_on_fail yes \
+  --quad_demote_drift_floor -1.0
+
+# G — plot L2
+echo "[$(date)] [${CHROM}] === G plot_L2 ==="
+"${RSCRIPT_BIN}" "${SCRIPT_DIR_THETA}/STEP_TR_G_plot_L2.R" \
+  --precomp "${GHSL_PRECOMP_F}" --sim_mat "${SIM_NN80}" --sim_mat_l2 "${SIM_NN40}" \
+  --l1_catalogue  "${GHSL_L1_DIR}/${CHROM}.L1_envelopes.tsv" \
+  --l1_boundaries "${GHSL_L1_DIR}/${CHROM}.L1_boundaries.tsv" \
+  --l2_envelopes  "${GHSL_L2_DIR}/${CHROM}.L2_envelopes.tsv" \
+  --l2_boundaries "${GHSL_L2_DIR}/${CHROM}.L2_boundaries.tsv" \
+  --chr "${CHROM}" --outdir "${GHSL_L2_PLOTS_DIR}" \
+  --boundary_filter stable
+
+# J — atlas JSON (slim, no carrier / no CUSUM — GHSL has no dense per-sample track yet)
+echo "[$(date)] [${CHROM}] === J atlas_json ==="
+"${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_GH_J_atlas_json.R" \
+  --chr         "${CHROM}" \
+  --precomp_dir "${GHSL_PRECOMP_DIR}" \
+  --l1_dir      "${GHSL_L1_DIR}" \
+  --l2_dir      "${GHSL_L2_DIR}" \
+  --outdir      "${GHSL_JSON_DIR}" \
+  --scale       "${GHSL_PCA_SCALE_FULL}"
 
 echo "[$(date)] [${CHROM}] DONE"
 PERCHROM_EOF
@@ -175,13 +256,15 @@ echo "${CHROMS}" \
       fi
     "
 
-# ---- D — registry merge (once, after all per-chrom finished) ---------------
+# ---- K — registry merge (once, after all per-chrom finished) ---------------
+# (Script name is STEP_GH_D_merge_registry.R for historical reasons; renamed
+# in the log to K to disambiguate from per-chrom D=detect_L1 above.)
 echo ""
-echo "[$(date)] === D merge_registry (genome-wide) ==="
+echo "[$(date)] === K merge_registry (genome-wide) ==="
 "${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_GH_D_merge_registry.R" \
   --precomp_dir "${GHSL_PRECOMP_DIR}" \
   --outdir      "${GHSL_PRECOMP_DIR}" \
-  || echo "[WARN] D registry merge failed — partial state OK if some chroms FAILed"
+  || echo "[WARN] K registry merge failed — partial state OK if some chroms FAILed"
 
 echo ""
 echo "================================================================"
@@ -193,6 +276,13 @@ echo "  matrices:  ${GHSL_MATRICES_DIR}/<chr>.ghsl_matrices.rds"
 echo "  local_pca: ${GHSL_LOCALPCA_DIR}/<chr>.ghsl_window_pca.rds"
 echo "  precomp:   ${GHSL_PRECOMP_DIR}/<chr>.ghsl_precomp.rds"
 echo "  sim_mats:  ${GHSL_PRECOMP_DIR}/sim_mats/<chr>.sim_mat_nn{0,40,80,160,320}.rds"
+echo "  L1:        ${GHSL_L1_DIR}/<chr>.L1_{envelopes,boundaries,score_curve}.tsv"
+echo "  L1 plot:   ${GHSL_L1_PLOTS_DIR}/<chr>.L1_overlay.pdf"
+echo "  L2:        ${GHSL_L2_DIR}/<chr>.L2_{envelopes,boundaries,segment_stats,quadrant_audit}.tsv"
+echo "  L2 plot:   ${GHSL_L2_PLOTS_DIR}/<chr>.L2_overlay.pdf"
+echo "  atlas:     ${GHSL_JSON_DIR}/<chr>/<chr>_phase3_ghsl.json"
+echo ""
+ls -lh "${GHSL_JSON_DIR}"/*/*_phase3_ghsl.json 2>/dev/null | awk '{print "  "$NF}' || echo "  (no atlas JSONs yet)"
 echo ""
 echo "Per-chrom logs: ${PATH3_ROOT}/logs_perchrom/ghsl.<chrom>.log"
-echo "Re-run will SKIP chroms whose <chr>.ghsl_precomp.rds already exists."
+echo "Re-run will SKIP chroms whose <chr>_phase3_ghsl.json already exists."
