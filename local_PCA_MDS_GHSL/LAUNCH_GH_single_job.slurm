@@ -66,6 +66,16 @@ export OUTROOT="${PATH3_ROOT}"
 # "01_ghsl_local_pca"). Our config writes GH_B output to GHSL_LOCALPCA_DIR
 # (02_local_pca by default), so bridge the two names here.
 export OUT_GH_LOCAL_PCA_DIR="${GHSL_LOCALPCA_DIR}"
+# Launcher-local defaults for the L1/L2/atlas dirs. These are also defined in
+# the central config, but we set them here too so the launcher is robust to
+# running against an older config that doesn't know about them.
+export GHSL_L1_DIR="${GHSL_L1_DIR:-${PATH3_ROOT}/04_L1_detect}"
+export GHSL_L1_PLOTS_DIR="${GHSL_L1_PLOTS_DIR:-${PATH3_ROOT}/05_L1_plots}"
+export GHSL_L2_DIR="${GHSL_L2_DIR:-${PATH3_ROOT}/06_L2_detect}"
+export GHSL_L2_PLOTS_DIR="${GHSL_L2_PLOTS_DIR:-${PATH3_ROOT}/07_L2_plots}"
+export GHSL_JSON_DIR="${GHSL_JSON_DIR:-${PATH3_ROOT}/08_atlas_json}"
+# Same defensive default for SCRIPT_DIR_THETA — needed for TR_D/E/F/G calls.
+export SCRIPT_DIR_THETA="${SCRIPT_DIR_THETA:-${REPO_ROOT:-$(dirname "${SCRIPT_DIR}")}/local_PCA_MDS_theta_pi}"
 export GHSL_POSTPROCESS_DIR GHSL_PREP_DIR GHSL_MATRICES_DIR \
        GHSL_LOCALPCA_DIR GHSL_PRECOMP_DIR \
        GHSL_L1_DIR GHSL_L1_PLOTS_DIR GHSL_L2_DIR GHSL_L2_PLOTS_DIR GHSL_JSON_DIR \
