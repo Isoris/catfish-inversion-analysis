@@ -22,18 +22,21 @@ set -euo pipefail
 
 CHR="${1:?Provide chromosome label as argv1, e.g. C_gar_LG28}"
 
-# Path resolution (defaults match the canonical scratch tree)
+# Path resolution (defaults match the canonical scratch tree; every variable
+# can be overridden by exporting it before calling this script — e.g. via
+# `set -a; source $SHARED/00_inversion_config.sh; set +a`).
 BASE="${BASE:-/scratch/lt200308-agbsci/Quentin_project_KEEP_2026-02-04}"
-SCRATCH_ROOT="${SCRATCH_ROOT:-${BASE}/inversion_localpca_v8}"
-SCRIPT_DIR="${SCRIPT_DIR:-${BASE}/inversion-popgen-toolkit/local_PCA_z}"
+SCRATCH_ROOT="${SCRATCH_ROOT:-${BASE}/inversion_localpca_v7}"
+SCRIPT_DIR="${SCRIPT_DIR:-${BASE}/catfish-inversion-analysis/local_PCA_MDS_z}"
 RSCRIPT_BIN="${RSCRIPT_BIN:-Rscript}"
 
-PRECOMP_DIR="${SCRATCH_ROOT}/path_localpca_zblocks/04_precomp/precomp"
-L1_DIR="${SCRATCH_ROOT}/path_localpca_zblocks/05_L1"
-L1_PLOT_DIR="${SCRATCH_ROOT}/path_localpca_zblocks/06_L1_plots"
-L2_DIR="${SCRATCH_ROOT}/path_localpca_zblocks/07_L2"
-L2_PLOT_DIR="${SCRATCH_ROOT}/path_localpca_zblocks/08_L2_plots"
-JSON_DIR="${SCRATCH_ROOT}/path_localpca_zblocks/09_atlas_json"
+PATH1_ROOT="${PATH1_ROOT:-${SCRATCH_ROOT}/local_PCA_MDS_z}"
+PRECOMP_DIR="${PRECOMP_DIR:-${PATH1_ROOT}/04_precomp/precomp}"
+L1_DIR="${L1_DIR:-${PATH1_ROOT}/05_L1}"
+L1_PLOT_DIR="${L1_PLOT_DIR:-${PATH1_ROOT}/06_L1_plots}"
+L2_DIR="${L2_DIR:-${PATH1_ROOT}/07_L2}"
+L2_PLOT_DIR="${L2_PLOT_DIR:-${PATH1_ROOT}/08_L2_plots}"
+JSON_DIR="${JSON_DIR:-${PATH1_ROOT}/09_atlas_json}"
 SAMPLE_META="${SAMPLE_META:-${SCRATCH_ROOT}/_shared/sample_metadata.tsv}"
 
 mkdir -p "${L1_DIR}" "${L1_PLOT_DIR}" "${L2_DIR}" "${L2_PLOT_DIR}" "${JSON_DIR}"

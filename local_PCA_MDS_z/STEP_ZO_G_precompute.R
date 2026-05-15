@@ -91,19 +91,34 @@ SEED_NEIGHBOR_K  <- 3L    # k for seed_nn_dist
 # step10_prefix is still accepted as the first positional for CLI back-compat;
 # its dirname is used to locate the tmp/ directory.
 
-tmpdir <- file.path(outdir, "tmp")
-if (!dir.exists(tmpdir)) {
-  # Fallback: try sibling-of-step10_prefix layout
-  alt <- file.path(dirname(step10_prefix), "tmp")
-  if (dir.exists(alt)) tmpdir <- alt else stop("Missing tmp dir (looked at ",
-                                               tmpdir, " and ", alt, ")")
+# Locate the per-chrom MDS RDS files. ZO_E writes them to <outdir>/mds_perchr/
+# (the new name, since these are the final ZO_E output now that ZO_F is gone).
+# Older runs put them in <outdir>/tmp/ — kept as a fallback so existing data
+# loads without renaming. Also tries the legacy "sibling of step10_prefix"
+# layout under both names.
+candidate_dirs <- c(
+  file.path(outdir,                    "mds_perchr"),
+  file.path(outdir,                    "tmp"),
+  file.path(dirname(step10_prefix),    "mds_perchr"),
+  file.path(dirname(step10_prefix),    "tmp")
+)
+mds_perchr_dir <- NULL
+for (cand in candidate_dirs) {
+  if (dir.exists(cand) &&
+      length(list.files(cand, pattern = "\\.mds_perchr\\.rds$")) > 0L) {
+    mds_perchr_dir <- cand; break
+  }
+}
+if (is.null(mds_perchr_dir)) {
+  stop("Missing per-chrom MDS dir. Looked at:\n  ",
+       paste(candidate_dirs, collapse = "\n  "))
 }
 
-perchr_files <- sort(list.files(tmpdir, pattern = "\\.mds_perchr\\.rds$",
+perchr_files <- sort(list.files(mds_perchr_dir, pattern = "\\.mds_perchr\\.rds$",
                                 full.names = TRUE))
-if (length(perchr_files) == 0L) stop("No .mds_perchr.rds files in ", tmpdir)
+if (length(perchr_files) == 0L) stop("No .mds_perchr.rds files in ", mds_perchr_dir)
 
-message("[PRECOMP] Loading ", length(perchr_files), " per-chrom MDS results from ", tmpdir)
+message("[PRECOMP] Loading ", length(perchr_files), " per-chrom MDS results from ", mds_perchr_dir)
 t_load <- proc.time()
 per_chr <- list()
 for (f in perchr_files) {
@@ -289,9 +304,10 @@ precompute_one_chr <- function(chr) {
       nn_dmat <- sqrt(nn_dsq)
 
       # Similarity transform: linear rescaling against this scale's own 95th
-      # percentile (matches the upstream sim_mat formula).
-      nn_dmax <- quantile(nn_dmat[is.finite(nn_dmat) & nn_dmat > 0], 0.95,
-                          na.rm = TRUE)
+      # percentile (matches the upstream sim_mat formula). IMPORTANT: include
+      # zeros in the quantile — excluding them shifts dmax up and compresses
+      # the dynamic range, producing washed-out (pastel) sim_mat plots.
+      nn_dmax <- quantile(nn_dmat[is.finite(nn_dmat)], 0.95, na.rm = TRUE)
       if (!is.finite(nn_dmax) || nn_dmax == 0) nn_dmax <- 1
       nn_sim <- 1 - pmin(nn_dmat / nn_dmax, 1)
       nn_sim[!is.finite(nn_sim)] <- 0

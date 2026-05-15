@@ -117,20 +117,9 @@ if (is.null(PRECOMP) && !is.null(PRECOMP_DIR) && !is.null(CHR)) {
   cand <- file.path(PRECOMP_DIR, paste0(CHR, ".precomp.rds"))
   if (file.exists(cand)) { PRECOMP <- cand; message("[export v3] resolved --precomp: ", cand) }
 }
-if (!is.null(PRECOMP_DIR) && !is.null(CHR)) {
-  for (nn in NN_LIST) {
-    label <- paste0("nn", trimws(nn))
-    if (is.null(sim_scales_user[[label]])) {
-      cand <- file.path(PRECOMP_DIR, "sim_mats",
-                        paste0(CHR, ".sim_mat_", label, ".rds"))
-      if (file.exists(cand)) {
-        # injected lazily; the discovery loop below doesn't see CLI flags so
-        # we stash them into sim_scales_user directly.
-        # (sim_scales_user is initialized below — pre-create here.)
-      }
-    }
-  }
-}
+# (The sim_mat_<nn> auto-resolution lives below at lines ~155+ after
+#  sim_scales_user is initialized. An empty placeholder loop used to sit
+#  here that referenced sim_scales_user before initialization — removed.)
 if (is.null(L1_ENV) && !is.null(L1_DIR) && !is.null(CHR)) {
   cand <- file.path(L1_DIR, paste0(CHR, ".L1_envelopes.tsv"))
   if (file.exists(cand)) { L1_ENV <- cand; message("[export v3] resolved --l1_envelopes: ", cand) }
@@ -402,8 +391,15 @@ sample_meta <- sample_meta[match(sample_ids, ind)]
 
 
 # ---- Z column ----------------------------------------------------------------
+# Canonical Z column in the current precomp is `max_abs_z` (the per-window max
+# of |MDS{1..k}_z|, produced by ZO_G). The older candidate names below are
+# kept for back-compat with archive precomp files. Last-resort fallback is
+# lam_1 (first-eigenvalue magnitude), which has a totally different scale —
+# expect the atlas threshold lines (1.2 / 1.8 / 2.5) to be uninformative on
+# lam_1, but the relative shape of the per-window Z-track is still meaningful.
 z_col <- NULL
-for (cand in c("robust_z", "z_robust", "z", "mds_z_robust", "mds_z1_robust",
+for (cand in c("max_abs_z", "MDS1_z",
+               "robust_z", "z_robust", "z", "mds_z_robust", "mds_z1_robust",
                "z_pc1", "robust_z_pc1", "lam_1_z", "z_lam1")) {
   if (cand %in% names(dt)) { z_col <- cand; break }
 }

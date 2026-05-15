@@ -123,7 +123,14 @@ page_size    <- as.numeric(get_arg("--page_size", "14"))
 outline_lw   <- as.numeric(get_arg("--outline_lw", "0.6"))
 label_size   <- as.numeric(get_arg("--label_size", "1.2"))
 z_clip       <- as.numeric(get_arg("--z_clip", "5"))
-boundary_lw    <- as.numeric(get_arg("--boundary_lw", "0.4"))
+boundary_lw  <- as.numeric(get_arg("--boundary_lw", "0.4"))
+# Similarity quantile anchors for the colormap. Default q0.05/q0.95 matches
+# TR_G's L2 plotting and gives a much sharper image than the previous
+# hardcoded q0.05/q0.98 (which mapped only the top 2% of sim values to the
+# bright end and washed the rest out). Lower q_hi -> more contrast on
+# uniformly-high segments.
+sim_q_lo     <- as.numeric(get_arg("--sim_q_lo", "0.05"))
+sim_q_hi     <- as.numeric(get_arg("--sim_q_hi", "0.95"))
 
 # Boundary status filter & colors. Available statuses:
 #   STABLE_BLUE  -- real long-range separation, persists at all val_W
@@ -469,8 +476,8 @@ hm <- data.table(
 sim_layer <- hm[!is.na(sim_val)]
 z_layer   <- hm[!is.na(z_val)]
 
-q_lo <- as.numeric(quantile(sim_layer$sim_val, 0.05, na.rm = TRUE))
-q_hi <- as.numeric(quantile(sim_layer$sim_val, 0.98, na.rm = TRUE))
+q_lo <- as.numeric(quantile(sim_layer$sim_val, sim_q_lo, na.rm = TRUE))
+q_hi <- as.numeric(quantile(sim_layer$sim_val, sim_q_hi, na.rm = TRUE))
 
 z_max <- max(abs(z_layer$z_val), na.rm = TRUE)
 z_max <- min(z_max, z_clip)

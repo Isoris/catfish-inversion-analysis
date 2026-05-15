@@ -68,25 +68,12 @@ set -a
 source "${CONFIG_CENTRAL}"
 set +a
 
-# Stream-specific config (provides PESTPG_DIR, JSON_OUT_DIR, OUTROOT, CHROM_LIST…)
-# Resolve relative to this script's directory so it works regardless of repo
-# layout. Falls back to INVDIR-relative for legacy compat.
+# 2026-05-14: the standalone 00_theta_config.sh has been merged into the
+# central config (the "θπ pipeline parameters" section in
+# ${CONFIG_CENTRAL}). PESTPG_DIR, JSON_OUT_DIR, OUTROOT, etc. all come from
+# there. Forcibly restore SCRIPT_DIR to this launcher's own directory AFTER
+# the central source so the per-step R scripts resolve correctly.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-for cand in \
-    "${SCRIPT_DIR}/00_theta_config.sh" \
-    "${INVDIR:-${BASE_DIR}/inversion-popgen-toolkit/inversion_modules}/phase_2_discovery/2f_theta_discovery/00_theta_config.sh" \
-    "${BASE_DIR}/inversion_codebase_v8.5/phase_2_discovery/2f_theta_discovery/00_theta_config.sh"; do
-  if [[ -f "$cand" ]]; then CONFIG_THETA="$cand"; break; fi
-done
-if [[ -z "${CONFIG_THETA:-}" ]]; then
-  echo "Missing theta config (tried new + legacy paths)" >&2
-  exit 1
-fi
-echo "[launcher] using theta config:   ${CONFIG_THETA}"
-
-set -a
-source "${CONFIG_THETA}"
-set +a
 
 # B01-style: ensure pipeline output directories exist
 if declare -F inv_init_dirs >/dev/null; then

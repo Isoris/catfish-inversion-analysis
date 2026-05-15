@@ -49,6 +49,9 @@ PRECOMP_DIR  <- get_arg("--precomp_dir")
 L2_DIR       <- get_arg("--l2_dir")
 OUT_DIR      <- get_arg("--out_dir")
 MAX_K        <- as.integer(get_arg("--max-k", "3"))
+# Precomp filename suffix — defaults to ".precomp.rds" (theta_pi) but can be
+# pointed at GHSL outputs by passing ".ghsl_precomp.rds".
+PRECOMP_SUFFIX <- get_arg("--precomp_suffix", ".precomp.rds")
 
 OUTROOT <- Sys.getenv("OUTROOT", unset = NA)
 if (is.na(PRECOMP_DIR)) {
@@ -57,12 +60,13 @@ if (is.na(PRECOMP_DIR)) {
 }
 if (is.na(L2_DIR))      L2_DIR      <- file.path(OUTROOT, "L2_detect")
 if (is.na(OUT_DIR))     OUT_DIR     <- file.path(OUTROOT, "carriers")
-message("[TR_H] precomp dir: ", PRECOMP_DIR)
+message("[TR_H] precomp dir: ", PRECOMP_DIR, " suffix=", PRECOMP_SUFFIX)
 dir.create(OUT_DIR, recursive = TRUE, showWarnings = FALSE)
 
+precomp_pat <- paste0(gsub("\\.", "\\\\.", PRECOMP_SUFFIX, fixed = FALSE), "$")
 chroms <- if (!is.na(CHR)) CHR else
-  sub("\\.precomp\\.rds$", "",
-      list.files(PRECOMP_DIR, pattern = "\\.precomp\\.rds$"))
+  sub(precomp_pat, "",
+      list.files(PRECOMP_DIR, pattern = precomp_pat))
 
 approx_sil <- function(v, cl, k) {
   sil <- numeric(length(v))
@@ -101,7 +105,7 @@ windows_in_range <- function(dt, l2_row) {
 }
 
 for (chrom in chroms) {
-  rds <- file.path(PRECOMP_DIR, paste0(chrom, ".precomp.rds"))
+  rds <- file.path(PRECOMP_DIR, paste0(chrom, PRECOMP_SUFFIX))
   l2f <- file.path(L2_DIR,      paste0(chrom, ".L2_envelopes.tsv"))
   if (!file.exists(rds) || !file.exists(l2f)) {
     message("[TR_H] ", chrom, ": missing precomp or L2 — skip"); next

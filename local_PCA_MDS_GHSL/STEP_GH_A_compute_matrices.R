@@ -287,9 +287,20 @@ for (chr in chroms) {
   if (is.null(pc) || is.null(pc$dt) || nrow(pc$dt) < 20L) {
     message("[GH_A] ", chr, ": precomp has <20 windows — skip"); next
   }
-  win_grid <- pc$dt[, .(window_idx, start_bp, end_bp)]
+  # window_idx is a 0-based row-order index into the per-chrom window grid.
+  # The slim Z-path precomp doesn't ship a column called window_idx
+  # explicitly (it has window_index_chr, or just row order). Resolve to
+  # whichever is available; fall back to seq_len()-1 if neither exists.
+  pc_dt <- pc$dt
+  if ("window_idx" %in% names(pc_dt)) {
+    win_grid <- pc_dt[, .(window_idx, start_bp, end_bp)]
+  } else if ("window_index_chr" %in% names(pc_dt)) {
+    win_grid <- pc_dt[, .(window_idx = window_index_chr, start_bp, end_bp)]
+  } else {
+    win_grid <- pc_dt[, .(window_idx = seq_len(.N) - 1L, start_bp, end_bp)]
+  }
   setorder(win_grid, start_bp)
-  rm(pc); invisible(gc(verbose = FALSE))
+  rm(pc, pc_dt); invisible(gc(verbose = FALSE))
   n_win <- nrow(win_grid)
   message("[GH_A] ", chr, ": ", n_win, " windows")
 
