@@ -334,7 +334,7 @@ for (chrom in chroms) {
         side_block <- function(which_side) {
           r <- bd_b[side == which_side]
           if (nrow(r) == 0L) return(list(n_carriers = 0L))
-          list(
+          out <- list(
             n_carriers     = as.integer(r$n_carriers),
             median_bp      = as.integer(r$median_bp),
             iqr_kb         = round(r$iqr_kb, 2),
@@ -344,6 +344,12 @@ for (chrom in chroms) {
             consensus_strength    = round(r$consensus_strength, 3),
             consensus_informative = as.logical(r$consensus_informative)
           )
+          # Forward 80% sample-consensus fields (TR_I May 2026+).
+          for (col in c("n_carriers_supporting", "frac_carriers_supporting",
+                        "consensus_tol_kb", "passes_frac_threshold")) {
+            if (col %in% names(r)) out[[col]] <- r[[col]]
+          }
+          out
         }
         bands[[b]] <- list(
           band            = b,

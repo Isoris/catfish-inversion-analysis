@@ -35,16 +35,20 @@ get_arg <- function(flag, default = NA_character_) {
   if (is.na(i) || i == length(args)) return(default); args[i + 1L]
 }
 
-chrom        <- get_arg("--chr")
-precomp_dir  <- get_arg("--precomp_dir")
-l1_dir       <- get_arg("--l1_dir")
-l2_dir       <- get_arg("--l2_dir")
-outdir       <- get_arg("--outdir")
-scale_label  <- get_arg("--scale", Sys.getenv("GHSL_PCA_SCALE_FULL", unset = "s50"))
+chrom         <- get_arg("--chr")
+precomp_dir   <- get_arg("--precomp_dir")
+l1_dir        <- get_arg("--l1_dir")
+l2_dir        <- get_arg("--l2_dir")
+carriers_dir  <- get_arg("--carriers_dir")
+cusum_dir     <- get_arg("--cusum_dir")
+outdir        <- get_arg("--outdir")
+scale_label   <- get_arg("--scale", Sys.getenv("GHSL_PCA_SCALE_FULL", unset = "s50"))
 
 stopifnot(!is.na(chrom), !is.na(precomp_dir), !is.na(outdir))
-if (is.na(l1_dir)) l1_dir <- file.path(dirname(precomp_dir), "04_L1_detect")
-if (is.na(l2_dir)) l2_dir <- file.path(dirname(precomp_dir), "06_L2_detect")
+if (is.na(l1_dir))       l1_dir       <- file.path(dirname(precomp_dir), "04_L1_detect")
+if (is.na(l2_dir))       l2_dir       <- file.path(dirname(precomp_dir), "06_L2_detect")
+# carriers/cusum dirs are optional — when missing, the carriers/cusum blocks
+# are simply omitted (e.g. if you haven't run TR_H/TR_I yet).
 
 `%||%` <- function(a, b) if (is.null(a) || length(a) == 0L || (length(a) == 1L && is.na(a))) b else a
 
@@ -168,6 +172,89 @@ envs_block <- list(
   l2_boundaries = bnds_to_list(l2_bnds, "L2")
 )
 
+# ── ghsl_cusum: per-L2-candidate band + per-sample CP records ─────────────────
+# Mirrors theta_pi_cusum: candidates × bands, each band emits per_sample
+# (one CP per carrier) and boundary_5_prime / boundary_3_prime consensus
+# blocks (with the 80% sample-consensus fields from TR_I May 2026+).
+cusum_block <- NULL
+if (!is.na(carriers_dir) || !is.na(cusum_dir)) {
+  ca_path <- if (!is.na(carriers_dir))
+                file.path(carriers_dir, paste0(chrom, ".carrier_assignments.tsv"))
+             else NA_character_
+  cs_path <- if (!is.na(cusum_dir))
+                file.path(cusum_dir, paste0(chrom, ".cusum_per_sample.tsv.gz"))
+             else NA_character_
+  bd_path <- if (!is.na(cusum_dir))
+                file.path(cusum_dir, paste0(chrom, ".cusum_boundary_dist.tsv"))
+             else NA_character_
+
+  ca_dt <- if (!is.na(ca_path) && file.exists(ca_path)) fread(ca_path) else data.table()
+  cs_dt <- if (!is.na(cs_path) && file.exists(cs_path)) fread(cs_path) else data.table()
+  bd_dt <- if (!is.na(bd_path) && file.exists(bd_path)) fread(bd_path) else data.table()
+
+  cusum_candidates <- list()
+  if (nrow(l2_envs) > 0L && nrow(ca_dt) > 0L && "candidate_id" %in% names(l2_envs)) {
+    for (k in seq_len(nrow(l2_envs))) {
+      cid <- l2_envs$candidate_id[k]
+      ca_sub <- ca_dt[candidate_id == cid]
+      cs_sub <- if (nrow(cs_dt) > 0L) cs_dt[candidate_id == cid] else data.table()
+      bd_sub <- if (nrow(bd_dt) > 0L) bd_dt[candidate_id == cid] else data.table()
+      if (nrow(ca_sub) == 0L) next
+      bands <- list()
+      for (b in unique(ca_sub$band)) {
+        members <- ca_sub[band == b]
+        cs_b    <- cs_sub[band == b]
+        bd_b    <- bd_sub[band == b]
+        side_block <- function(which_side) {
+          r <- bd_b[side == which_side]
+          if (nrow(r) == 0L) return(list(n_carriers = 0L))
+          out <- list(
+            n_carriers     = as.integer(r$n_carriers),
+            median_bp      = as.integer(r$median_bp),
+            iqr_kb         = round(r$iqr_kb, 2),
+            spread_class   = r$spread_class,
+            peak_strength  = round(r$peak_strength, 3),
+            consensus_cp_bp       = as.integer(r$consensus_cp_bp),
+            consensus_strength    = round(r$consensus_strength, 3),
+            consensus_informative = as.logical(r$consensus_informative)
+          )
+          for (col in c("n_carriers_supporting", "frac_carriers_supporting",
+                        "consensus_tol_kb", "passes_frac_threshold")) {
+            if (col %in% names(r)) out[[col]] <- r[[col]]
+          }
+          out
+        }
+        bands[[b]] <- list(
+          band            = b,
+          n_members       = nrow(members),
+          member_samples  = members$sample_id,
+          per_sample      = lapply(seq_len(nrow(cs_b)), function(j) list(
+            sample_id        = cs_b$sample_id[j],
+            cp_bp            = as.integer(cs_b$cp_bp[j] %||% NA_integer_),
+            strength         = round(cs_b$strength[j], 3),
+            asymmetry        = as.integer(cs_b$asymmetry[j] %||% NA_integer_),
+            informative      = as.logical(cs_b$informative[j]),
+            cp_side_inferred = cs_b$cp_side_inferred[j]
+          )),
+          boundary_5_prime = side_block("5_prime"),
+          boundary_3_prime = side_block("3_prime")
+        )
+      }
+      cusum_candidates[[length(cusum_candidates) + 1L]] <- list(
+        candidate_id = cid, chrom = chrom,
+        start_bp     = as.integer(l2_envs$start_bp[k] %||% NA_integer_),
+        end_bp       = as.integer(l2_envs$end_bp[k]   %||% NA_integer_),
+        bands        = bands
+      )
+    }
+  }
+  cusum_block <- list(
+    schema_version = 1L, layer = "ghsl_cusum", chrom = chrom,
+    n_candidates   = length(cusum_candidates),
+    candidates     = cusum_candidates
+  )
+}
+
 # ── tracks (per-window aggregates) ────────────────────────────────────────────
 tracks_block <- list(
   ghsl_div_median   = list(values = clean(dt$div_median, 6),  pos_bp = as.integer(dt$mid_bp)),
@@ -184,6 +271,7 @@ if ("sketch_novelty" %in% names(dt))
                                             pos_bp = as.integer(dt$mid_bp))
 
 layers <- c("ghsl_local_pca", "ghsl_envelopes", "tracks")
+if (!is.null(cusum_block)) layers <- c(layers, "ghsl_cusum")
 
 obj <- list(
   schema_version    = 1L,
@@ -198,6 +286,7 @@ obj <- list(
   ghsl_local_pca    = local_pca_block,
   ghsl_envelopes    = envs_block
 )
+if (!is.null(cusum_block)) obj$ghsl_cusum <- cusum_block
 
 out_dir <- file.path(outdir, chrom)
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)

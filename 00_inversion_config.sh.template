@@ -177,12 +177,15 @@ export GHSL_POSTPROCESS_DIR="${GHSL_POSTPROCESS_DIR:-${MODULE_4A_ROOT}/postproce
 export GHSL_PREP_DIR="${GHSL_PREP_DIR:-${PATH3_ROOT}/00_prep}"            # output of prep step
 export GHSL_MATRICES_DIR="${GHSL_MATRICES_DIR:-${PATH3_ROOT}/01_matrices}" # output of GH_A
 export GHSL_LOCALPCA_DIR="${GHSL_LOCALPCA_DIR:-${PATH3_ROOT}/02_local_pca}" # output of GH_B
-export GHSL_PRECOMP_DIR="${GHSL_PRECOMP_DIR:-${PATH3_ROOT}/03_precomp}"    # output of GH_C
-export GHSL_L1_DIR="${GHSL_L1_DIR:-${PATH3_ROOT}/04_L1_detect}"            # output of GH_D L1 detect (TR_D)
-export GHSL_L1_PLOTS_DIR="${GHSL_L1_PLOTS_DIR:-${PATH3_ROOT}/05_L1_plots}" # output of GH_E plot_L1 (TR_E)
-export GHSL_L2_DIR="${GHSL_L2_DIR:-${PATH3_ROOT}/06_L2_detect}"            # output of GH_F L2 detect (TR_F)
-export GHSL_L2_PLOTS_DIR="${GHSL_L2_PLOTS_DIR:-${PATH3_ROOT}/07_L2_plots}" # output of GH_G plot_L2 (TR_G)
-export GHSL_JSON_DIR="${GHSL_JSON_DIR:-${PATH3_ROOT}/08_atlas_json}"       # output of GH_J atlas JSON
+export GHSL_PRECOMP_DIR="${GHSL_PRECOMP_DIR:-${PATH3_ROOT}/03_precomp}"           # output of GH_C (coarse, mode=full)
+export GHSL_PRECOMP_DENSE_DIR="${GHSL_PRECOMP_DENSE_DIR:-${PATH3_ROOT}/03_precomp_dense}" # output of GH_C (dense, mode=local) — for carriers/CUSUM
+export GHSL_L1_DIR="${GHSL_L1_DIR:-${PATH3_ROOT}/04_L1_detect}"                   # output of GH_D L1 detect (TR_D)
+export GHSL_L1_PLOTS_DIR="${GHSL_L1_PLOTS_DIR:-${PATH3_ROOT}/05_L1_plots}"        # output of GH_E plot_L1 (TR_E)
+export GHSL_L2_DIR="${GHSL_L2_DIR:-${PATH3_ROOT}/06_L2_detect}"                   # output of GH_F L2 detect (TR_F)
+export GHSL_L2_PLOTS_DIR="${GHSL_L2_PLOTS_DIR:-${PATH3_ROOT}/07_L2_plots}"        # output of GH_G plot_L2 (TR_G)
+export GHSL_CARRIERS_DIR="${GHSL_CARRIERS_DIR:-${PATH3_ROOT}/08_carriers}"        # output of GH_H carriers (TR_H)
+export GHSL_CUSUM_DIR="${GHSL_CUSUM_DIR:-${PATH3_ROOT}/09_cusum}"                 # output of GH_I cusum (TR_I, --feature_source precomp_pc1)
+export GHSL_JSON_DIR="${GHSL_JSON_DIR:-${PATH3_ROOT}/10_atlas_json}"              # output of GH_J atlas JSON
 
 # Multi-scale rolling aggregates (s10 = 10×raw-bp window, s50 = 50×, ...).
 export GHSL_SCALES="${GHSL_SCALES:-10,20,30,40,50,100}"
@@ -216,9 +219,10 @@ inv_init_dirs() {
     "${PATH2_ROOT}/L2_detect" "${PATH2_ROOT}/L2_plots" \
     "${PATH3_ROOT}" \
     "${GHSL_PREP_DIR}" "${GHSL_MATRICES_DIR}" "${GHSL_LOCALPCA_DIR}" \
-    "${GHSL_PRECOMP_DIR}" \
+    "${GHSL_PRECOMP_DIR}" "${GHSL_PRECOMP_DENSE_DIR}" \
     "${GHSL_L1_DIR}" "${GHSL_L1_PLOTS_DIR}" \
     "${GHSL_L2_DIR}" "${GHSL_L2_PLOTS_DIR}" \
+    "${GHSL_CARRIERS_DIR}" "${GHSL_CUSUM_DIR}" \
     "${GHSL_JSON_DIR}" \
     "${SHARED_DIR}" "${LOG_DIR}"
 }

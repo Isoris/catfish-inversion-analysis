@@ -25,14 +25,19 @@
 #   E    : STEP_TR_E_plot_L1.R            (L1 overlay PDF)
 #   F    : STEP_TR_F_detect_L2.R          (L2 boundaries inside each L1)
 #   G    : STEP_TR_G_plot_L2.R            (L2 overlay PDF)
-#   J    : STEP_GH_J_atlas_json.R         (slim atlas JSON: sim_mat + L1/L2;
-#                                          no carriers / no CUSUM — GHSL has
-#                                          no dense per-sample track yet)
+#   H    : STEP_TR_H_classify_carriers.R  (per-sample PC1/PC2 carrier bands)
+#   I    : STEP_TR_I_cusum_per_carrier.R  (CUSUM on PC_1_<sid> + 80% gate)
+#   J    : STEP_GH_J_atlas_json.R         (atlas JSON: sim_mat + L1/L2 +
+#                                          carriers + CUSUM with the 80%
+#                                          sample-consensus gate fields)
 #   K    : STEP_GH_D_merge_registry.R     (genome-wide registry — runs once
 #                                          after all per-chrom finish)
 #
-# TR_D/E/F/G are pipeline-agnostic and operate on any precomp + sim_mats with
-# the standard window_dt schema, so we reuse them against GHSL outputs.
+# TR_D/E/F/G/H/I are pipeline-agnostic and operate on any precomp + sim_mats
+# with the standard window_dt schema; H/I take --precomp_suffix to handle
+# GHSL's .ghsl_precomp.rds naming, and TR_I takes --feature_source precomp_pc1
+# to read per-sample PC1 columns directly (avoiding the need for an external
+# θπ-style per-sample TSV).
 #
 # Auto-detects which chroms have postprocess data in
 # ${GHSL_POSTPROCESS_DIR}/<chr>/<sample>/ — useful while Clair3 is still
@@ -69,24 +74,33 @@ export OUT_GH_LOCAL_PCA_DIR="${GHSL_LOCALPCA_DIR}"
 # Launcher-local defaults for the L1/L2/atlas dirs. These are also defined in
 # the central config, but we set them here too so the launcher is robust to
 # running against an older config that doesn't know about them.
+export GHSL_PRECOMP_DENSE_DIR="${GHSL_PRECOMP_DENSE_DIR:-${PATH3_ROOT}/03_precomp_dense}"
 export GHSL_L1_DIR="${GHSL_L1_DIR:-${PATH3_ROOT}/04_L1_detect}"
 export GHSL_L1_PLOTS_DIR="${GHSL_L1_PLOTS_DIR:-${PATH3_ROOT}/05_L1_plots}"
 export GHSL_L2_DIR="${GHSL_L2_DIR:-${PATH3_ROOT}/06_L2_detect}"
 export GHSL_L2_PLOTS_DIR="${GHSL_L2_PLOTS_DIR:-${PATH3_ROOT}/07_L2_plots}"
-export GHSL_JSON_DIR="${GHSL_JSON_DIR:-${PATH3_ROOT}/08_atlas_json}"
+export GHSL_CARRIERS_DIR="${GHSL_CARRIERS_DIR:-${PATH3_ROOT}/08_carriers}"
+export GHSL_CUSUM_DIR="${GHSL_CUSUM_DIR:-${PATH3_ROOT}/09_cusum}"
+export GHSL_JSON_DIR="${GHSL_JSON_DIR:-${PATH3_ROOT}/10_atlas_json}"
+# Sample-consensus gate thresholds for TR_I (May 2026+).
+export GHSL_CONSENSUS_FRAC_THRESHOLD="${GHSL_CONSENSUS_FRAC_THRESHOLD:-0.8}"
+export GHSL_CONSENSUS_TOL_KB="${GHSL_CONSENSUS_TOL_KB:-100}"
 # Same defensive default for SCRIPT_DIR_THETA — needed for TR_D/E/F/G calls.
 export SCRIPT_DIR_THETA="${SCRIPT_DIR_THETA:-${REPO_ROOT:-$(dirname "${SCRIPT_DIR}")}/local_PCA_MDS_theta_pi}"
 export GHSL_POSTPROCESS_DIR GHSL_PREP_DIR GHSL_MATRICES_DIR \
-       GHSL_LOCALPCA_DIR GHSL_PRECOMP_DIR \
-       GHSL_L1_DIR GHSL_L1_PLOTS_DIR GHSL_L2_DIR GHSL_L2_PLOTS_DIR GHSL_JSON_DIR \
+       GHSL_LOCALPCA_DIR GHSL_PRECOMP_DIR GHSL_PRECOMP_DENSE_DIR \
+       GHSL_L1_DIR GHSL_L1_PLOTS_DIR GHSL_L2_DIR GHSL_L2_PLOTS_DIR \
+       GHSL_CARRIERS_DIR GHSL_CUSUM_DIR GHSL_JSON_DIR \
        GHSL_SCALES \
        GHSL_PCA_SCALE_FULL GHSL_PCA_SCALE_DENSE \
+       GHSL_CONSENSUS_FRAC_THRESHOLD GHSL_CONSENSUS_TOL_KB \
        PRECOMP_DIR SAMPLES_IND RSCRIPT_BIN SCRIPT_DIR SCRIPT_DIR_THETA
 
 mkdir -p logs "${GHSL_PREP_DIR}" "${GHSL_MATRICES_DIR}" "${GHSL_LOCALPCA_DIR}" \
-         "${GHSL_PRECOMP_DIR}" \
+         "${GHSL_PRECOMP_DIR}" "${GHSL_PRECOMP_DENSE_DIR}" \
          "${GHSL_L1_DIR}" "${GHSL_L1_PLOTS_DIR}" \
          "${GHSL_L2_DIR}" "${GHSL_L2_PLOTS_DIR}" \
+         "${GHSL_CARRIERS_DIR}" "${GHSL_CUSUM_DIR}" \
          "${GHSL_JSON_DIR}" \
          "${PATH3_ROOT}/logs_perchrom"
 
@@ -131,7 +145,7 @@ echo "  Chroms:"
 echo "${CHROMS}" | awk '{print "    "$0}'
 echo "================================================================"
 
-# ---- Per-chrom pipeline (PREP -> A -> B -> C -> D -> E -> F -> G -> J) -----
+# ---- Per-chrom pipeline (PREP -> A -> B -> C -> D -> E -> F -> G -> H -> I -> J) -----
 PERCHROM_SCRIPT="$(mktemp /tmp/run_ghsl_chr_XXXXXX.sh)"
 chmod +x "${PERCHROM_SCRIPT}"
 trap "rm -f ${PERCHROM_SCRIPT}" EXIT
@@ -242,15 +256,48 @@ echo "[$(date)] [${CHROM}] === G plot_L2 ==="
   --chr "${CHROM}" --outdir "${GHSL_L2_PLOTS_DIR}" \
   --boundary_filter stable
 
-# J — atlas JSON (slim, no carrier / no CUSUM — GHSL has no dense per-sample track yet)
+# For v1 we use the COARSE precomp (s50 scale) for TR_H + TR_I — it already
+# has PC_1_<sid> per window per sample, which is what CUSUM needs. CUSUM
+# resolution will match the coarse scale (~1 Mb steps). A true dense pass
+# would require re-running GH_B + GH_C at the dense scale into
+# ${GHSL_PRECOMP_DENSE_DIR}; we can add that later if breakpoint precision
+# is insufficient.
+
+# H — classify carriers (per-sample PC1/PC2 clustering inside each L2 candidate)
+echo "[$(date)] [${CHROM}] === H classify_carriers ==="
+"${RSCRIPT_BIN}" "${SCRIPT_DIR_THETA}/STEP_TR_H_classify_carriers.R" \
+  --chr             "${CHROM}" \
+  --precomp_dir     "${GHSL_PRECOMP_DIR}" \
+  --precomp_suffix  ".ghsl_precomp.rds" \
+  --l2_dir          "${GHSL_L2_DIR}" \
+  --out_dir         "${GHSL_CARRIERS_DIR}"
+
+# I — per-carrier CUSUM (feature = PC_1_<sid> from GHSL precomp; plus
+# the 80% sample-consensus filter via --consensus_frac_threshold).
+echo "[$(date)] [${CHROM}] === I cusum_per_carrier ==="
+"${RSCRIPT_BIN}" "${SCRIPT_DIR_THETA}/STEP_TR_I_cusum_per_carrier.R" \
+  --chr                       "${CHROM}" \
+  --lib                       "${SCRIPT_DIR_THETA}/lib_persample_cusum.R" \
+  --precomp_dir               "${GHSL_PRECOMP_DIR}" \
+  --precomp_suffix            ".ghsl_precomp.rds" \
+  --feature_source            precomp_pc1 \
+  --l2_dir                    "${GHSL_L2_DIR}" \
+  --carriers_dir              "${GHSL_CARRIERS_DIR}" \
+  --out_dir                   "${GHSL_CUSUM_DIR}" \
+  --consensus_frac_threshold  "${GHSL_CONSENSUS_FRAC_THRESHOLD}" \
+  --consensus_tol_kb          "${GHSL_CONSENSUS_TOL_KB}"
+
+# J — atlas JSON (now WITH carriers + CUSUM blocks).
 echo "[$(date)] [${CHROM}] === J atlas_json ==="
 "${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_GH_J_atlas_json.R" \
-  --chr         "${CHROM}" \
-  --precomp_dir "${GHSL_PRECOMP_DIR}" \
-  --l1_dir      "${GHSL_L1_DIR}" \
-  --l2_dir      "${GHSL_L2_DIR}" \
-  --outdir      "${GHSL_JSON_DIR}" \
-  --scale       "${GHSL_PCA_SCALE_FULL}"
+  --chr           "${CHROM}" \
+  --precomp_dir   "${GHSL_PRECOMP_DIR}" \
+  --l1_dir        "${GHSL_L1_DIR}" \
+  --l2_dir        "${GHSL_L2_DIR}" \
+  --carriers_dir  "${GHSL_CARRIERS_DIR}" \
+  --cusum_dir     "${GHSL_CUSUM_DIR}" \
+  --outdir        "${GHSL_JSON_DIR}" \
+  --scale         "${GHSL_PCA_SCALE_FULL}"
 
 echo "[$(date)] [${CHROM}] DONE"
 PERCHROM_EOF
@@ -290,6 +337,8 @@ echo "  L1:        ${GHSL_L1_DIR}/<chr>.L1_{envelopes,boundaries,score_curve}.ts
 echo "  L1 plot:   ${GHSL_L1_PLOTS_DIR}/<chr>.L1_overlay.pdf"
 echo "  L2:        ${GHSL_L2_DIR}/<chr>.L2_{envelopes,boundaries,segment_stats,quadrant_audit}.tsv"
 echo "  L2 plot:   ${GHSL_L2_PLOTS_DIR}/<chr>.L2_overlay.pdf"
+echo "  carriers:  ${GHSL_CARRIERS_DIR}/<chr>.carrier_assignments.tsv"
+echo "  cusum:     ${GHSL_CUSUM_DIR}/<chr>.cusum_{per_sample.tsv.gz,boundary_dist.tsv}"
 echo "  atlas:     ${GHSL_JSON_DIR}/<chr>/<chr>_phase3_ghsl.json"
 echo ""
 ls -lh "${GHSL_JSON_DIR}"/*/*_phase3_ghsl.json 2>/dev/null | awk '{print "  "$NF}' || echo "  (no atlas JSONs yet)"
