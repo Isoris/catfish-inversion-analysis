@@ -229,7 +229,8 @@ echo "[$(date)] [${CHROM}] === E plot_L1 ==="
   --catalogue  "${GHSL_L1_DIR}/${CHROM}.L1_envelopes.tsv" \
   --boundaries "${GHSL_L1_DIR}/${CHROM}.L1_boundaries.tsv" \
   --chr "${CHROM}" --outdir "${GHSL_L1_PLOTS_DIR}" \
-  --toggle_L1 yes --boundary_filter stable
+  --toggle_L1 yes --boundary_filter stable \
+  --sim_q_lo "${SIM_Q_LO:-0.05}" --sim_q_hi "${SIM_Q_HI:-0.95}"
 
 # F — detect L2 boundaries (inside each L1 envelope)
 echo "[$(date)] [${CHROM}] === F detect_L2 ==="

@@ -131,7 +131,8 @@ echo "[$(date)] [${CHROM}] === E plot_L1 ==="
 "${RSCRIPT_BIN}" "${TR_STEPS}/STEP_TR_E_plot_L1.R" \
   --precomp_dir "${OUTROOT}/precomp" --L1_dir "${OUTROOT}/L1_detect" \
   --chr "${CHROM}" --outdir "${OUTROOT}/L1_plots" \
-  --toggle_L1 yes --boundary_filter stable
+  --toggle_L1 yes --boundary_filter stable \
+  --sim_q_lo "${SIM_Q_LO:-0.05}" --sim_q_hi "${SIM_Q_HI:-0.95}"
 
 echo "[$(date)] [${CHROM}] === F detect_L2 ==="
 "${RSCRIPT_BIN}" "${TR_STEPS}/STEP_TR_F_detect_L2.R" \
