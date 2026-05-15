@@ -52,6 +52,10 @@ export SCRIPT_DIR="${SCRIPT_DIR_GHSL}"
 
 # Required env from central config (must be exported for child R scripts).
 export OUTROOT="${PATH3_ROOT}"
+# GH_C reads its local-PCA input dir from $OUT_GH_LOCAL_PCA_DIR (default
+# "01_ghsl_local_pca"). Our config writes GH_B output to GHSL_LOCALPCA_DIR
+# (02_local_pca by default), so bridge the two names here.
+export OUT_GH_LOCAL_PCA_DIR="${GHSL_LOCALPCA_DIR}"
 export GHSL_POSTPROCESS_DIR GHSL_PREP_DIR GHSL_MATRICES_DIR \
        GHSL_LOCALPCA_DIR GHSL_PRECOMP_DIR GHSL_SCALES \
        GHSL_PCA_SCALE_FULL GHSL_PCA_SCALE_DENSE \
