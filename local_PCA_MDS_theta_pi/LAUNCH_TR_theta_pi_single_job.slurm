@@ -122,22 +122,34 @@ echo "[$(date)] [${CHROM}] === C coarse (mode=full) ==="
 
 echo "[$(date)] [${CHROM}] === D detect_L1 ==="
 "${RSCRIPT_BIN}" "${TR_STEPS}/STEP_TR_D_detect_L1.R" \
-  --precomp_dir "${OUTROOT}/precomp" --chr "${CHROM}" --outdir "${OUTROOT}/L1_detect"
+  --precomp_dir "${OUTROOT}/precomp" --chr "${CHROM}" --outdir "${OUTROOT}/L1_detect" \
+  --boundary_scan TRUE \
+  --boundary_validator_mode grow \
+  --boundary_W 5 --boundary_offset 5 --boundary_min_dist 30
 
 echo "[$(date)] [${CHROM}] === E plot_L1 ==="
 "${RSCRIPT_BIN}" "${TR_STEPS}/STEP_TR_E_plot_L1.R" \
   --precomp_dir "${OUTROOT}/precomp" --L1_dir "${OUTROOT}/L1_detect" \
-  --chr "${CHROM}" --outdir "${OUTROOT}/L1_plots"
+  --chr "${CHROM}" --outdir "${OUTROOT}/L1_plots" \
+  --toggle_L1 yes --boundary_filter stable
 
 echo "[$(date)] [${CHROM}] === F detect_L2 ==="
 "${RSCRIPT_BIN}" "${TR_STEPS}/STEP_TR_F_detect_L2.R" \
   --precomp_dir "${OUTROOT}/precomp" --L1_dir "${OUTROOT}/L1_detect" \
-  --chr "${CHROM}" --outdir "${OUTROOT}/L2_detect"
+  --chr "${CHROM}" --outdir "${OUTROOT}/L2_detect" \
+  --boundary_scan TRUE \
+  --boundary_validator_mode grow \
+  --quadrant_validator yes \
+  --weak_demote_score 0 \
+  --quad_rescue_max_grow_z 1.5 \
+  --quad_demote_on_fail yes \
+  --quad_demote_drift_floor -1.0
 
 echo "[$(date)] [${CHROM}] === G plot_L2 ==="
 "${RSCRIPT_BIN}" "${TR_STEPS}/STEP_TR_G_plot_L2.R" \
   --precomp_dir "${OUTROOT}/precomp" --L1_dir "${OUTROOT}/L1_detect" \
-  --L2_dir "${OUTROOT}/L2_detect" --chr "${CHROM}" --outdir "${OUTROOT}/L2_plots"
+  --L2_dir "${OUTROOT}/L2_detect" --chr "${CHROM}" --outdir "${OUTROOT}/L2_plots" \
+  --boundary_filter stable
 
 # DENSE pass
 export PESTPG_SCALE="${DENSE_PESTPG_SCALE}"
