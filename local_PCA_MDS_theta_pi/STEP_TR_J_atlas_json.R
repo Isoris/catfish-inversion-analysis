@@ -331,8 +331,8 @@ for (chrom in chroms) {
         members <- ca_sub[band == b]
         cs_b    <- cs_sub[band == b]
         bd_b    <- bd_sub[band == b]
-        side_block <- function(side) {
-          r <- bd_b[side == ..side]
+        side_block <- function(which_side) {
+          r <- bd_b[side == which_side]
           if (nrow(r) == 0L) return(list(n_carriers = 0L))
           list(
             n_carriers     = as.integer(r$n_carriers),
