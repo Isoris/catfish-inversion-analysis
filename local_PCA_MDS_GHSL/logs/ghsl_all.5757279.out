@@ -1,0 +1,30 @@
+[launcher] central config: /scratch/lt200308-agbsci/Quentin_project_KEEP_2026-02-04/inversion_localpca_v7/_shared/00_inversion_config.sh
+================================================================
+  GHSL single-job — 1 chroms with Clair3 data, 8 parallel
+  Started:    Thu May 14 06:14:49 PM +07 2026
+  POSTPROCESS: /scratch/lt200308-agbsci/Quentin_project_KEEP_2026-02-04/MODULE_4A_SNP_INDEL50_Clair3/postprocess_results
+  GHSL_PREP:   /scratch/lt200308-agbsci/Quentin_project_KEEP_2026-02-04/inversion_localpca_v7/local_PCA_MDS_GHSL/00_prep
+  OUTROOT:     /scratch/lt200308-agbsci/Quentin_project_KEEP_2026-02-04/inversion_localpca_v7/local_PCA_MDS_GHSL
+  SCRIPT_DIR:  /var/spool/slurmd/job5757279
+  Chroms:
+    C_gar_LG01
+================================================================
+[launcher] dispatching 1 chroms × 8 parallel...
+[FAIL] C_gar_LG01  (see /scratch/lt200308-agbsci/Quentin_project_KEEP_2026-02-04/inversion_localpca_v7/local_PCA_MDS_GHSL/logs_perchrom/ghsl.C_gar_LG01.log)
+
+[Thu May 14 06:14:49 PM +07 2026] === D merge_registry (genome-wide) ===
+Fatal error: cannot open file '/var/spool/slurmd/job5757279/STEP_GH_D_merge_registry.R': No such file or directory
+[WARN] D registry merge failed — partial state OK if some chroms FAILed
+
+================================================================
+  GHSL pipeline complete. Finished: Thu May 14 06:14:49 PM +07 2026
+================================================================
+Outputs:
+  prep:      /scratch/lt200308-agbsci/Quentin_project_KEEP_2026-02-04/inversion_localpca_v7/local_PCA_MDS_GHSL/00_prep/<chr>.merged_phased_snps.tsv.gz
+  matrices:  /scratch/lt200308-agbsci/Quentin_project_KEEP_2026-02-04/inversion_localpca_v7/local_PCA_MDS_GHSL/01_matrices/<chr>.ghsl_matrices.rds
+  local_pca: /scratch/lt200308-agbsci/Quentin_project_KEEP_2026-02-04/inversion_localpca_v7/local_PCA_MDS_GHSL/02_local_pca/<chr>.ghsl_window_pca.rds
+  precomp:   /scratch/lt200308-agbsci/Quentin_project_KEEP_2026-02-04/inversion_localpca_v7/local_PCA_MDS_GHSL/03_precomp/<chr>.ghsl_precomp.rds
+  sim_mats:  /scratch/lt200308-agbsci/Quentin_project_KEEP_2026-02-04/inversion_localpca_v7/local_PCA_MDS_GHSL/03_precomp/sim_mats/<chr>.sim_mat_nn{0,40,80,160,320}.rds
+
+Per-chrom logs: /scratch/lt200308-agbsci/Quentin_project_KEEP_2026-02-04/inversion_localpca_v7/local_PCA_MDS_GHSL/logs_perchrom/ghsl.<chrom>.log
+Re-run will SKIP chroms whose <chr>.ghsl_precomp.rds already exists.
