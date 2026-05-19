@@ -817,44 +817,62 @@ if (!is.null(l1_bnd_dt)) {
   }
 }
 
-# ---- Assemble & write --------------------------------------------------------
-out_list <- list(
-  schema_version = 3L,
-  chrom          = chrom,
-  n_windows      = n_win,
-  n_samples      = n_samp,
-  samples        = lapply(seq_len(nrow(sample_meta)), function(i) {
-    list(ind = sample_meta$ind[i], cga = sample_meta$cga[i],
-         ancestry = sample_meta$ancestry[i],
-         family_id = as.integer(sample_meta$family_id[i] %||% -1L))
-  }),
-  family_source     = family_source,    # "pairs" | "family" | "none"
-  theta_cutoff      = if (family_source == "pairs") THETA_CUT else NULL,
-  has_pc2           = have_pc2,
-  z_column          = z_col,
-  windows        = windows,
-  sim_thumb      = sim_thumb,
-  sim_thumb_n    = sim_thumb_n,
+# ---- Assemble & write (v10 / schema v4) -------------------------------------
+# Emit harmonized schema v4 via _shared/lib_atlas_json.R. Pipeline tag = "z".
+# Optional per_window / carriers / cusum stay NULL (z path has no carriers).
+.find_lib_atlas <- function() {
+  cand <- Sys.getenv("LIB_ATLAS_JSON", unset = "")
+  if (nzchar(cand) && file.exists(cand)) return(cand)
+  cand <- file.path(Sys.getenv("SCRIPT_DIR_SHARED", unset = ""),
+                   "lib_atlas_json.R")
+  if (nzchar(Sys.getenv("SCRIPT_DIR_SHARED")) && file.exists(cand)) return(cand)
+  cur <- tryCatch(normalizePath(getwd(), mustWork = FALSE),
+                  error = function(e) ".")
+  for (i in 1:8) {
+    c2 <- file.path(cur, "_shared", "lib_atlas_json.R")
+    if (file.exists(c2)) return(c2)
+    cur <- dirname(cur)
+  }
+  stop("Could not find _shared/lib_atlas_json.R; set SCRIPT_DIR_SHARED or LIB_ATLAS_JSON")
+}
+source(.find_lib_atlas())
+
+samples_json <- lapply(seq_len(nrow(sample_meta)), function(i) {
+  list(ind = sample_meta$ind[i], cga = sample_meta$cga[i],
+       ancestry = sample_meta$ancestry[i],
+       family_id = as.integer(sample_meta$family_id[i] %||% -1L))
+})
+
+message("[export v4] Writing harmonized JSON: ", OUT)
+atlas_json_v4(
+  pipeline          = "z",
+  chrom             = chrom,
+  n_windows         = n_win,
+  n_samples         = n_samp,
+  samples           = samples_json,
+  windows           = windows,
+  sim_thumb         = sim_thumb,
+  sim_thumb_n       = sim_thumb_n,
   sim_scales        = sim_scales_json,
   default_sim_scale = default_scale,
-  sim_q_lo       = SIM_Q_LO,
-  sim_q_hi       = SIM_Q_HI,
-  z_clip         = Z_CLIP,
-  z_max_min      = Z_MAX_MIN,
-  theta_range    = if (!is.null(theta_range)) as.numeric(theta_range) else NULL,
-  has_theta      = !is.null(theta_by_sample),
-  l1_envelopes   = l1_envelopes_json,
-  l2_envelopes   = l2_envelopes_json,
-  l2_boundaries  = l2_boundaries_json,
-  l1_boundaries  = l1_boundaries_json,
-  has_l1_envelopes  = !is.null(l1_envelopes_json),
-  has_l2_envelopes  = !is.null(l2_envelopes_json),
-  has_l2_boundaries = !is.null(l2_boundaries_json),
-  has_l1_boundaries = !is.null(l1_boundaries_json),
-  tracks            = if (length(tracks_json) > 0) tracks_json else NULL
+  sim_q_lo          = SIM_Q_LO,
+  sim_q_hi          = SIM_Q_HI,
+  z_clip            = Z_CLIP,
+  z_max_min         = Z_MAX_MIN,
+  z_column          = z_col,
+  has_pc2           = have_pc2,
+  family_source     = family_source,
+  theta_cutoff      = if (family_source == "pairs") THETA_CUT else NULL,
+  scale             = NULL,
+  theta_range       = if (!is.null(theta_range)) as.numeric(theta_range) else NULL,
+  has_theta         = !is.null(theta_by_sample),
+  l1_envelopes      = l1_envelopes_json,
+  l1_boundaries     = l1_boundaries_json,
+  l2_envelopes      = l2_envelopes_json,
+  l2_boundaries     = l2_boundaries_json,
+  tracks            = if (length(tracks_json) > 0) tracks_json else NULL,
+  generator         = "STEP_ZO_M_export_atlas_json.R",
+  out_path          = OUT
 )
-
-message("[export v3] Writing JSON: ", OUT)
-write_json(out_list, OUT, auto_unbox = TRUE, digits = 6, na = "null")
 fs <- file.info(OUT)$size
-message(sprintf("[export v3] Done. Output size: %.1f MB", fs / 1e6))
+message(sprintf("[export v4] Done. Output size: %.1f MB", fs / 1e6))

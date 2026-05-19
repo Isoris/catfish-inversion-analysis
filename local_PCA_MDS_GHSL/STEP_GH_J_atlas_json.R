@@ -270,28 +270,89 @@ if ("sketch_novelty" %in% names(dt))
   tracks_block$ghsl_sketch_novelty <- list(values = clean(dt$sketch_novelty, 4),
                                             pos_bp = as.integer(dt$mid_bp))
 
-layers <- c("ghsl_local_pca", "ghsl_envelopes", "tracks")
-if (!is.null(cusum_block)) layers <- c(layers, "ghsl_cusum")
+# ── Harmonized schema v4 envelope (v10) ──────────────────────────────────────
+# The original GHSL JSON layered everything under ghsl_local_pca /
+# ghsl_envelopes / ghsl_cusum keys with schema_version=1. v4 merges those
+# layered keys into the canonical z-style top-level (windows / sim_thumb /
+# sim_scales / l{1,2}_envelopes / etc.) and keeps the legacy ghsl_*
+# blocks as `extra` for back-compat with current consumers.
+.find_lib_atlas <- function() {
+  cand <- Sys.getenv("LIB_ATLAS_JSON", unset = "")
+  if (nzchar(cand) && file.exists(cand)) return(cand)
+  cand2 <- file.path(Sys.getenv("SCRIPT_DIR_SHARED", unset = ""),
+                     "lib_atlas_json.R")
+  if (nzchar(Sys.getenv("SCRIPT_DIR_SHARED")) && file.exists(cand2)) return(cand2)
+  cur <- getwd()
+  for (i in 1:8) {
+    c3 <- file.path(cur, "_shared", "lib_atlas_json.R")
+    if (file.exists(c3)) return(c3)
+    cur <- dirname(cur)
+  }
+  stop("Could not find _shared/lib_atlas_json.R; set SCRIPT_DIR_SHARED or LIB_ATLAS_JSON")
+}
+source(.find_lib_atlas())
 
-obj <- list(
-  schema_version    = 1L,
-  chrom             = chrom,
-  n_samples         = n_samp,
-  n_windows         = n_win,
-  scale             = scale_label,
-  `_generated_at`   = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"),
-  `_generator`      = "STEP_GH_J_atlas_json.R",
-  `_layers_present` = layers,
-  tracks            = tracks_block,
-  ghsl_local_pca    = local_pca_block,
-  ghsl_envelopes    = envs_block
-)
-if (!is.null(cusum_block)) obj$ghsl_cusum <- cusum_block
+# Map layered GHSL blocks → harmonized top-level fields.
+samples_json_gh <- lapply(sample_order, function(s) list(ind = s))
+windows_json_gh <- lapply(seq_len(n_win), function(i) {
+  rec <- list(
+    window_idx    = as.integer(dt$window_idx[i]),
+    start_bp      = as.integer(dt$start_bp[i]),
+    end_bp        = as.integer(dt$end_bp[i]),
+    mid_bp        = as.integer(dt$mid_bp[i]),
+    max_abs_z     = clean(dt$max_abs_z[i], 4),
+    z_direct      = clean(dt$div_z_direct[i], 4),
+    lambda_ratio  = clean(dt$lambda_ratio[i], 4)
+  )
+  if ("MDS1" %in% names(dt)) rec$MDS1 <- clean(dt$MDS1[i], 6)
+  if ("MDS2" %in% names(dt)) rec$MDS2 <- clean(dt$MDS2[i], 6)
+  rec
+})
 
+# sim_thumb = the unsmoothed sim_mat as a flat vector (or NULL if banded).
+sim_thumb_v   <- if (precomp$sim_mat_format == "upper_triangle_float32" &&
+                     !is.null(precomp$sim_mat)) clean(as.vector(t(precomp$sim_mat)), 4) else NULL
+sim_thumb_n_v <- if (!is.null(sim_thumb_v)) n_win else 0L
+
+# Coerce envelopes to a v4-shaped list (already done by envs_to_list above).
 out_dir <- file.path(outdir, chrom)
-dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 out_json <- file.path(out_dir, sprintf("%s_phase3_ghsl.json", chrom))
-write_json(obj, out_json, auto_unbox = TRUE, na = "null", pretty = FALSE, digits = NA)
+
+# carriers / cusum: GHSL has a single ghsl_cusum block today (no separate
+# carriers). Pass it through as the cusum extension so the v4 envelope
+# carries it without losing the existing field shape.
+atlas_json_v4(
+  pipeline          = "ghsl",
+  chrom             = chrom,
+  n_windows         = n_win,
+  n_samples         = n_samp,
+  samples           = samples_json_gh,
+  windows           = windows_json_gh,
+  sim_thumb         = sim_thumb_v,
+  sim_thumb_n       = sim_thumb_n_v,
+  sim_scales        = NULL,        # GHSL exporter emits single-scale today
+  default_sim_scale = NULL,
+  sim_q_lo          = NA_real_, sim_q_hi = NA_real_,
+  z_clip            = NA_real_, z_max_min = NA_real_,
+  z_column          = "max_abs_z",
+  has_pc2           = FALSE,
+  family_source     = "none",
+  scale             = scale_label,
+  l1_envelopes      = envs_block$l1,
+  l1_boundaries     = envs_block$l1_boundaries,
+  l2_envelopes      = envs_block$l2,
+  l2_boundaries     = envs_block$l2_boundaries,
+  tracks            = if (length(tracks_block) > 0) tracks_block else NULL,
+  cusum             = cusum_block,
+  generator         = "STEP_GH_J_atlas_json.R",
+  out_path          = out_json,
+  # Back-compat: keep the legacy layered GHSL blocks for current consumers.
+  extra             = list(
+    ghsl_local_pca = local_pca_block,
+    ghsl_envelopes = envs_block,
+    ghsl_cusum     = cusum_block
+  )
+)
 fi <- file.info(out_json)
-message(sprintf("[GH_J] %s: %s (%.2f MB)", chrom, out_json, fi$size / 1024 / 1024))
+message(sprintf("[GH_J v4] %s: %s (%.2f MB)", chrom, out_json, fi$size / 1024 / 1024))
 message("[GH_J] DONE")

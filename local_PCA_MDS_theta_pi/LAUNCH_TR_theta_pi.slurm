@@ -9,7 +9,22 @@
 #SBATCH -e logs/theta_pi.%A_%a.err
 
 # =============================================================================
-# LAUNCH_TR_theta_pi.slurm  (dual-scale, A→J)
+# LAUNCH_TR_theta_pi.slurm  (v10, 2026-05-16, harmonized layout — dual-scale, A→J)
+#
+# Harmonized v10 paths (from _shared/00_inversion_config.sh):
+#   PATH2_LOCAL_PCA = 01_local_pca/         (TR_A / TR_B output)
+#   PATH2_REGISTRY  = 02_dense_registry/    (TR_D registry artifacts)
+#   PATH2_MDS       = 03_mds/               (reserved; TR_C embeds MDS in precomp)
+#   PATH2_PRECOMP   = 04_precomp/           (TR_C --mode full)
+#   PATH2_PRECOMP_DENSE = 04_precomp_dense/ (TR_C --mode local)
+#   PATH2_L1 / L1_PLOTS = 05_L1 / 06_L1_plots
+#   PATH2_L2 / L2_PLOTS = 07_L2 / 08_L2_plots
+#   PATH2_CARRIERS  = 08_carriers/          (TR_H output)
+#   PATH2_CUSUM     = 09_cusum/             (TR_I output)
+#   PATH2_JSON      = 09_atlas_json/        (TR_J output)
+#
+# L1/L2 detect+plot calls now route to _shared/STEP_0{5,6,7,8}_*.R. Plot
+# steps honor MAKE_L1_PLOTS / MAKE_L2_PLOTS (default true).
 #
 # One whole chromosome per array task. Runs BOTH scales of the theta-pi
 # pipeline in sequence per chromosome:
@@ -123,6 +138,12 @@ export DENSE_PESTPG_SCALE="${DENSE_PESTPG_SCALE:-win10000.step2000}"
 # referenced an unset ${THETA_CONFIG_DIR} which crashed under `set -u`.
 TR_STEPS="${SCRIPT_DIR}/steps"
 [[ -d "${TR_STEPS}" ]] || TR_STEPS="${SCRIPT_DIR}"
+# Shared L1/L2 detect+plot scripts now live in _shared/ (one level up).
+SCRIPT_DIR_SHARED="${SCRIPT_DIR_SHARED:-$(cd "${SCRIPT_DIR}/../_shared" 2>/dev/null && pwd || echo "${SCRIPT_DIR}/../_shared")}"
+
+# Plot toggles — wired through to _shared/STEP_06 and _shared/STEP_08.
+export MAKE_L1_PLOTS="${MAKE_L1_PLOTS:-true}"
+export MAKE_L2_PLOTS="${MAKE_L2_PLOTS:-true}"
 
 # ---- Banner ----------------------------------------------------------------
 echo "================================================================"
@@ -154,42 +175,52 @@ echo "[$(date)] [${CHROM}] === B coarse — local PCA per window ==="
   --chrom "${CHROM}"
 
 echo ""
-echo "[$(date)] [${CHROM}] === C coarse — MDS + features (mode=full) ==="
+echo "[$(date)] [${CHROM}] === C coarse — MDS + features (mode=full → 04_precomp/) ==="
 "${RSCRIPT}" "${TR_STEPS}/STEP_TR_C_mds_compute.R" \
-  --chrom "${CHROM}" \
-  --mode  full
+  --chrom      "${CHROM}" \
+  --mode       full \
+  --out_subdir "${SLOT_PRECOMP:-04_precomp}"
 
 echo ""
-echo "[$(date)] [${CHROM}] === D — detect_L1 (nn80) ==="
-"${RSCRIPT}" "${TR_STEPS}/STEP_TR_D_detect_L1.R" \
-  --precomp_dir "${OUTROOT}/precomp" \
+echo "[$(date)] [${CHROM}] === D — _shared/STEP_05_L1_detect (nn80 → 05_L1/) ==="
+"${RSCRIPT}" "${SCRIPT_DIR_SHARED}/STEP_05_L1_detect.R" \
+  --precomp_dir "${PATH2_PRECOMP}" \
   --chr         "${CHROM}" \
-  --outdir      "${OUTROOT}/L1_detect"
+  --outdir      "${PATH2_L1}"
 
 echo ""
-echo "[$(date)] [${CHROM}] === E — plot_L1 ==="
-"${RSCRIPT}" "${TR_STEPS}/STEP_TR_E_plot_L1.R" \
-  --precomp_dir "${OUTROOT}/precomp" \
-  --L1_dir      "${OUTROOT}/L1_detect" \
+echo "[$(date)] [${CHROM}] === E — _shared/STEP_06_L1_plot (MAKE_L1_PLOTS=${MAKE_L1_PLOTS}) ==="
+"${RSCRIPT}" "${SCRIPT_DIR_SHARED}/STEP_06_L1_plot.R" \
+  --precomp_dir "${PATH2_PRECOMP}" \
+  --L1_dir      "${PATH2_L1}" \
   --chr         "${CHROM}" \
-  --outdir      "${OUTROOT}/L1_plots"
+  --outdir      "${PATH2_L1_PLOTS}"
 
 echo ""
-echo "[$(date)] [${CHROM}] === F — detect_L2 (nn40 inside each L1) ==="
-"${RSCRIPT}" "${TR_STEPS}/STEP_TR_F_detect_L2.R" \
-  --precomp_dir "${OUTROOT}/precomp" \
-  --L1_dir      "${OUTROOT}/L1_detect" \
+echo "[$(date)] [${CHROM}] === F — _shared/STEP_07_L2_detect (nn40 → 07_L2/) ==="
+"${RSCRIPT}" "${SCRIPT_DIR_SHARED}/STEP_07_L2_detect.R" \
+  --precomp_dir "${PATH2_PRECOMP}" \
+  --L1_dir      "${PATH2_L1}" \
   --chr         "${CHROM}" \
-  --outdir      "${OUTROOT}/L2_detect"
+  --outdir      "${PATH2_L2}"
 
 echo ""
-echo "[$(date)] [${CHROM}] === G — plot_L2 ==="
-"${RSCRIPT}" "${TR_STEPS}/STEP_TR_G_plot_L2.R" \
-  --precomp_dir "${OUTROOT}/precomp" \
-  --L1_dir      "${OUTROOT}/L1_detect" \
-  --L2_dir      "${OUTROOT}/L2_detect" \
+echo "[$(date)] [${CHROM}] === G — _shared/STEP_08_L2_plot (MAKE_L2_PLOTS=${MAKE_L2_PLOTS}) ==="
+"${RSCRIPT}" "${SCRIPT_DIR_SHARED}/STEP_08_L2_plot.R" \
+  --precomp_dir "${PATH2_PRECOMP}" \
+  --L1_dir      "${PATH2_L1}" \
+  --L2_dir      "${PATH2_L2}" \
   --chr         "${CHROM}" \
-  --outdir      "${OUTROOT}/L2_plots"
+  --outdir      "${PATH2_L2_PLOTS}"
+
+echo ""
+echo "[$(date)] [${CHROM}] === TR_D — merge_registry (genome-wide candidates → 02_dense_registry/) ==="
+# Optional in dual-scale per-chrom layout — safe to call per-chrom because
+# TR_D scans precomp_dir each time. The launcher could also defer this to
+# a single afterok dependency, but inline keeps the chain simple.
+"${RSCRIPT}" "${TR_STEPS}/STEP_TR_D_merge_registry.R" \
+  --precomp_dir "${PATH2_PRECOMP}" \
+  --outdir      "${PATH2_REGISTRY}"
 
 # ════════════════════════════════════════════════════════════════════════════
 # DENSE pass (win10000.step2000) — banded sim_mat only, no MDS, no NN-smooths
@@ -208,12 +239,12 @@ echo "[$(date)] [${CHROM}] === B dense — local PCA per window ==="
   --chrom "${CHROM}"
 
 echo ""
-echo "[$(date)] [${CHROM}] === C dense — banded sim_mat only (mode=local) ==="
+echo "[$(date)] [${CHROM}] === C dense — banded sim_mat only (mode=local → 04_precomp_dense/) ==="
 "${RSCRIPT}" "${TR_STEPS}/STEP_TR_C_mds_compute.R" \
   --chrom         "${CHROM}" \
   --mode          local \
   --sim-band-half 100 \
-  --out_subdir    precomp_dense
+  --out_subdir    "${SLOT_PRECOMP_DENSE:-04_precomp_dense}"
 
 # ════════════════════════════════════════════════════════════════════════════
 # MERGE pass — H/I/J consume coarse L1/L2 envelopes + dense per-window data.
@@ -236,8 +267,8 @@ echo ""
 echo "[$(date)] [${CHROM}] === J — atlas JSON (merged dual-scale page-12 bundle) ==="
 "${RSCRIPT}" "${TR_STEPS}/STEP_TR_J_atlas_json.R" \
   --chr                 "${CHROM}" \
-  --coarse_precomp_dir  "${OUTROOT}/precomp" \
-  --dense_precomp_dir   "${OUTROOT}/precomp_dense" \
+  --coarse_precomp_dir  "${PATH2_PRECOMP}" \
+  --dense_precomp_dir   "${PATH2_PRECOMP_DENSE}" \
   --coarse_pestpg_scale "${COARSE_PESTPG_SCALE}" \
   --dense_pestpg_scale  "${DENSE_PESTPG_SCALE}"
 

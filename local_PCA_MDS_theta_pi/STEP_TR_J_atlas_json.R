@@ -389,35 +389,94 @@ for (chrom in chroms) {
     theta_pi_mds2 = list(values = clean(dt$MDS2, 6), pos_bp = as.integer(dt$mid_bp))
   )
 
-  layers <- c("theta_pi_local_pca", "theta_pi_envelopes", "theta_pi_cusum", "tracks")
-  if (!is.null(per_window_block)) layers <- c("theta_pi_per_window", layers)
-  if (!is.null(grid_map_block))   layers <- c(layers, "theta_pi_grid_map")
+  # ── Harmonized schema v4 envelope (v10, 2026-05-16) ──────────────────────
+  # Convert the theta_pi layered blocks into the canonical z-style top-level
+  # via _shared/lib_atlas_json.R. Keep the existing theta_pi_* layered blocks
+  # as `extra` so current consumers continue working.
+  .find_lib_atlas <- function() {
+    cand <- Sys.getenv("LIB_ATLAS_JSON", unset = "")
+    if (nzchar(cand) && file.exists(cand)) return(cand)
+    c2 <- file.path(Sys.getenv("SCRIPT_DIR_SHARED", unset = ""),
+                    "lib_atlas_json.R")
+    if (nzchar(Sys.getenv("SCRIPT_DIR_SHARED")) && file.exists(c2)) return(c2)
+    cur <- getwd()
+    for (i in 1:8) {
+      c3 <- file.path(cur, "_shared", "lib_atlas_json.R")
+      if (file.exists(c3)) return(c3); cur <- dirname(cur)
+    }
+    stop("Could not find _shared/lib_atlas_json.R")
+  }
+  source(.find_lib_atlas())
 
-  obj <- list(
-    schema_version    = 2L,
-    chrom             = chrom,
-    n_samples         = n_samp,
-    n_windows         = n_win,           # coarse window count (atlas heatmap)
-    n_windows_coarse  = as.integer(n_win),
-    n_windows_dense   = if (use_dense_for_per_window) dense_n_win else NA_integer_,
-    scale             = COARSE_PESTPG_SCALE,
-    coarse_scale      = COARSE_PESTPG_SCALE,
-    dense_scale       = if (use_dense_for_per_window) DENSE_PESTPG_SCALE else NA_character_,
-    `_generated_at`   = format(Sys.time(), "%Y-%m-%dT%H:%M:%S%z"),
-    `_generator`      = "STEP_TR_J_atlas_json.R",
-    `_layers_present` = layers,
-    tracks                = tracks_block,
-    theta_pi_local_pca    = local_pca_block,
-    theta_pi_envelopes    = envs_block,
-    theta_pi_cusum        = cusum_block
-  )
-  if (!is.null(per_window_block)) obj$theta_pi_per_window <- per_window_block
-  if (!is.null(grid_map_block))   obj$theta_pi_grid_map   <- grid_map_block
+  # Samples (theta_pi has no identity-merge — emit {ind: name}; downstream
+  # can read $samples uniformly).
+  sample_ids_tr <- if (!is.null(local_pca_block$sample_order))
+                     local_pca_block$sample_order
+                   else as.character(seq_len(n_samp))
+  samples_json_tr <- lapply(sample_ids_tr, function(s) list(ind = s))
+
+  # Window records (z, |Z|, MDS coords + bp coords).
+  windows_json_tr <- lapply(seq_len(n_win), function(i) {
+    list(
+      window_idx   = as.integer(dt$window_idx[i]),
+      start_bp     = as.integer(dt$start_bp[i]),
+      end_bp       = as.integer(dt$end_bp[i]),
+      mid_bp       = as.integer(dt$mid_bp[i]),
+      max_abs_z    = clean(dt$max_abs_z[i], 4),
+      z_direct     = clean(dt$theta_z_direct[i], 4),
+      lambda_ratio = clean(dt$lambda_ratio[i], 4),
+      MDS1         = if ("MDS1" %in% names(dt)) clean(dt$MDS1[i], 6) else NA_real_,
+      MDS2         = if ("MDS2" %in% names(dt)) clean(dt$MDS2[i], 6) else NA_real_
+    )
+  })
+
+  sim_thumb_v   <- if (!is.null(precomp$sim_mat)) clean(as.vector(t(precomp$sim_mat)), 4) else NULL
+  sim_thumb_n_v <- if (!is.null(sim_thumb_v)) n_win else 0L
 
   out_dir <- file.path(JSON_OUT_DIR, chrom)
-  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
   out_json <- file.path(out_dir, sprintf("%s_phase2_theta.json", chrom))
-  write_json(obj, out_json, auto_unbox = TRUE, na = "null", pretty = FALSE, digits = NA)
+
+  extra_blocks <- list(
+    theta_pi_local_pca = local_pca_block,
+    theta_pi_envelopes = envs_block,
+    theta_pi_cusum     = cusum_block,
+    n_windows_coarse   = as.integer(n_win),
+    n_windows_dense    = if (use_dense_for_per_window) dense_n_win else NA_integer_,
+    coarse_scale       = COARSE_PESTPG_SCALE,
+    dense_scale        = if (use_dense_for_per_window) DENSE_PESTPG_SCALE else NA_character_
+  )
+  if (!is.null(per_window_block)) extra_blocks$theta_pi_per_window <- per_window_block
+  if (!is.null(grid_map_block))   extra_blocks$theta_pi_grid_map   <- grid_map_block
+
+  atlas_json_v4(
+    pipeline          = "theta_pi",
+    chrom             = chrom,
+    n_windows         = n_win,
+    n_samples         = n_samp,
+    samples           = samples_json_tr,
+    windows           = windows_json_tr,
+    sim_thumb         = sim_thumb_v,
+    sim_thumb_n       = sim_thumb_n_v,
+    sim_scales        = NULL,
+    default_sim_scale = NULL,
+    sim_q_lo          = NA_real_, sim_q_hi = NA_real_,
+    z_clip            = NA_real_, z_max_min = NA_real_,
+    z_column          = "max_abs_z",
+    has_pc2           = FALSE,
+    family_source     = "none",
+    scale             = COARSE_PESTPG_SCALE,
+    l1_envelopes      = envs_block$l1,
+    l1_boundaries     = envs_block$l1_boundaries,
+    l2_envelopes      = envs_block$l2,
+    l2_boundaries     = envs_block$l2_boundaries,
+    tracks            = tracks_block,
+    per_window        = per_window_block,
+    grid_map          = grid_map_block,
+    cusum             = cusum_block,
+    generator         = "STEP_TR_J_atlas_json.R",
+    out_path          = out_json,
+    extra             = extra_blocks
+  )
   fi <- file.info(out_json)
   message(sprintf("[TR_J] %s: %s (%.2f MB)", chrom, out_json, fi$size / 1024 / 1024))
 }
