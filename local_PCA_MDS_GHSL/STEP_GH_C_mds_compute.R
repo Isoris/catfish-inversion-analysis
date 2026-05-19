@@ -14,8 +14,15 @@
 # Outputs:
 #   $OUTROOT/<--out_subdir>/<chr>.ghsl_precomp.rds         (per-chrom dt + sim)
 #   $OUTROOT/<--out_subdir>/sim_mats/<chr>.sim_mat_nn{N}.rds (full mode only)
-#   $OUTROOT/<--out_subdir>/window_dt.tsv.gz               (genome rollup)
+#   $OUTROOT/<--out_subdir>/window_dt.tsv.gz               (genome QC rollup,
+#                                                            TSV only — no
+#                                                            combined RDS)
 #   $OUTROOT/<--out_subdir>/precomp_summary.tsv            (per-chrom QC)
+#
+# Harmonized output layout (v10): default --out_subdir is now "04_precomp"
+# (was "ghsl_precomp"), and the local-PCA input dir defaults to
+# "01_local_pca" (was "01_ghsl_local_pca"), so the slot numbering matches
+# z (ZO_*) and theta_pi (TR_*) pipelines under the same PATH<N>_ROOT.
 #
 # Local-mode (dense) additional outputs (ADR-0001 Layer C):
 #   $SKETCH_DIR/sample_sketch_basis.rds       (shared with θπ — reuse if exists)
@@ -32,7 +39,7 @@
 #   --kmds <int>                  default 5
 #   --sim-band-half <int>         default 200
 #   --sim-n-full-threshold <int>  default 6000
-#   --out_subdir <name>           default "ghsl_precomp"           [GHSL]
+#   --out_subdir <name>           default "04_precomp"             [harmonized v10]
 #   --d_sketch <int>              default 32
 #   --k_nn <int>                  default 50
 #   --cohort_id <str>             default $COHORT_ID or "default_cohort"
@@ -52,7 +59,7 @@ SIM_BAND_HALF        <- 200L
 SIM_N_FULL_THRESHOLD <- 6000L
 NN_SIM_SCALES        <- c(20, 40, 80, 120, 160, 200, 240, 320)
 MODE                 <- "full"
-OUT_SUBDIR           <- "ghsl_precomp"
+OUT_SUBDIR           <- Sys.getenv("SLOT_PRECOMP", unset = "04_precomp")
 D_SKETCH             <- 32L
 K_NN                 <- 50L
 COHORT_ID            <- Sys.getenv("COHORT_ID", unset = "default_cohort")
@@ -78,10 +85,20 @@ while (i <= length(args)) {
 stopifnot(MODE %in% c("full", "local"))
 
 OUTROOT             <- Sys.getenv("OUTROOT", unset = NA)
-OUT_GH_LOCAL_PCA_DIR <- Sys.getenv("OUT_GH_LOCAL_PCA_DIR",
-                                   unset = file.path(OUTROOT, "01_ghsl_local_pca"))
-SKETCH_DIR <- Sys.getenv("SKETCH_DIR",
-                         unset = file.path(OUTROOT, "03_dense_sketch"))
+# Harmonized v10: local-PCA input now lives in 01_local_pca/ (was 01_ghsl_local_pca/).
+# OUT_GH_LOCAL_PCA_DIR retained for back-compat with launchers that set it explicitly.
+OUT_GH_LOCAL_PCA_DIR <- Sys.getenv(
+  "OUT_GH_LOCAL_PCA_DIR",
+  unset = Sys.getenv("PATH3_LOCAL_PCA",
+                     unset = file.path(OUTROOT,
+                                       Sys.getenv("SLOT_LOCAL_PCA",
+                                                  unset = "01_local_pca"))))
+# Harmonized v10: sketch dir co-located with dense precomp (04_precomp_dense/sketch).
+SKETCH_DIR <- Sys.getenv(
+  "SKETCH_DIR",
+  unset = file.path(OUTROOT,
+                    Sys.getenv("SLOT_PRECOMP_DENSE", unset = "04_precomp_dense"),
+                    "sketch"))
 stopifnot(!is.na(OUTROOT))
 
 precomp_dir <- file.path(OUTROOT, OUT_SUBDIR)

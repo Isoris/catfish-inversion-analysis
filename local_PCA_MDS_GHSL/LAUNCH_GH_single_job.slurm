@@ -10,34 +10,48 @@
 #SBATCH -e logs/ghsl_all.%j.err
 
 # =============================================================================
-# LAUNCH_GH_single_job.slurm  (2026-05-14)
+# LAUNCH_GH_single_job.slurm  (v10, 2026-05-16, harmonized layout)
 #
 # GHSL phase-3 pipeline, single-job parallel layout (mirrors theta_pi).
 # For each chromosome that has Clair3 postprocess data, runs:
 #
 #   PREP : STEP_GH_prep_merged_phased_snps.sh
 #          (postprocess/<chr>/<sample>/all_variants_with_phase.tsv  ->
-#           <chr>.merged_phased_snps.tsv.gz)
+#           <chr>.merged_phased_snps.tsv.gz)            -> 00_prep/
 #   A    : STEP_GH_A_compute_matrices.R   (divergence matrices, multi-scale)
+#                                                       -> 01_local_pca/
 #   B    : STEP_GH_B_local_pca_compute.R  (per-window local PCA, scale s50)
+#                                                       -> 01_local_pca/
 #   C    : STEP_GH_C_mds_compute.R        (MDS + sim_mat + NN smoothing)
-#   D    : STEP_TR_D_detect_L1.R          (L1 boundaries on GHSL sim_mat_nn80)
-#   E    : STEP_TR_E_plot_L1.R            (L1 overlay PDF)
-#   F    : STEP_TR_F_detect_L2.R          (L2 boundaries inside each L1)
-#   G    : STEP_TR_G_plot_L2.R            (L2 overlay PDF)
+#                                                       -> 04_precomp/
+#   D    : _shared/STEP_05_L1_detect.R    (L1 boundaries on GHSL sim_mat_nn80)
+#                                                       -> 05_L1/
+#   E    : _shared/STEP_06_L1_plot.R      (L1 overlay PDF)
+#                                                       -> 06_L1_plots/
+#                                                       (gated by MAKE_L1_PLOTS)
+#   F    : _shared/STEP_07_L2_detect.R    (L2 boundaries inside each L1)
+#                                                       -> 07_L2/
+#   G    : _shared/STEP_08_L2_plot.R      (L2 overlay PDF)
+#                                                       -> 08_L2_plots/
+#                                                       (gated by MAKE_L2_PLOTS)
 #   H    : STEP_TR_H_classify_carriers.R  (per-sample PC1/PC2 carrier bands)
+#                                                       -> 08_carriers/
 #   I    : STEP_TR_I_cusum_per_carrier.R  (CUSUM on PC_1_<sid> + 80% gate)
-#   J    : STEP_GH_J_atlas_json.R         (atlas JSON: sim_mat + L1/L2 +
-#                                          carriers + CUSUM with the 80%
-#                                          sample-consensus gate fields)
+#                                                       -> 09_cusum/
+#   J    : STEP_GH_J_atlas_json.R         (harmonized atlas JSON v4)
+#                                                       -> 09_atlas_json/
 #   K    : STEP_GH_D_merge_registry.R     (genome-wide registry — runs once
 #                                          after all per-chrom finish)
+#                                                       -> 02_dense_registry/
 #
-# TR_D/E/F/G/H/I are pipeline-agnostic and operate on any precomp + sim_mats
-# with the standard window_dt schema; H/I take --precomp_suffix to handle
-# GHSL's .ghsl_precomp.rds naming, and TR_I takes --feature_source precomp_pc1
-# to read per-sample PC1 columns directly (avoiding the need for an external
-# θπ-style per-sample TSV).
+# Plot steps (E / G) honor MAKE_L1_PLOTS / MAKE_L2_PLOTS env vars (default
+# true). Set MAKE_L1_PLOTS=false or MAKE_L2_PLOTS=false in the config (or
+# at sbatch submit time) to skip the plotting passes.
+#
+# Shared L1/L2 detect+plot scripts in _shared/ are pipeline-agnostic. H/I
+# (carriers + CUSUM) still live in local_PCA_MDS_theta_pi/ and take
+# --precomp_suffix to handle GHSL's .ghsl_precomp.rds naming; TR_I takes
+# --feature_source precomp_pc1 to read per-sample PC1 columns directly.
 #
 # Auto-detects which chroms have postprocess data in
 # ${GHSL_POSTPROCESS_DIR}/<chr>/<sample>/ — useful while Clair3 is still
@@ -66,35 +80,35 @@ set -a; source "${CONFIG}"; set +a
 export SCRIPT_DIR="${SCRIPT_DIR_GHSL}"
 
 # Required env from central config (must be exported for child R scripts).
+# All GHSL_*_DIR values come from the harmonized v10 config (00_inversion_config.sh)
+# — they alias the PATH3_<SLOT> values so the directory numbering matches z
+# and theta_pi pipelines exactly (01_local_pca/02_dense_registry/03_mds/
+# 04_precomp/05_L1/06_L1_plots/07_L2/08_L2_plots/08_carriers/09_atlas_json/
+# 09_cusum). The legacy launcher-local overrides have been removed.
 export OUTROOT="${PATH3_ROOT}"
-# GH_C reads its local-PCA input dir from $OUT_GH_LOCAL_PCA_DIR (default
-# "01_ghsl_local_pca"). Our config writes GH_B output to GHSL_LOCALPCA_DIR
-# (02_local_pca by default), so bridge the two names here.
-export OUT_GH_LOCAL_PCA_DIR="${GHSL_LOCALPCA_DIR}"
-# Launcher-local defaults for the L1/L2/atlas dirs. These are also defined in
-# the central config, but we set them here too so the launcher is robust to
-# running against an older config that doesn't know about them.
-export GHSL_PRECOMP_DENSE_DIR="${GHSL_PRECOMP_DENSE_DIR:-${PATH3_ROOT}/03_precomp_dense}"
-export GHSL_L1_DIR="${GHSL_L1_DIR:-${PATH3_ROOT}/04_L1_detect}"
-export GHSL_L1_PLOTS_DIR="${GHSL_L1_PLOTS_DIR:-${PATH3_ROOT}/05_L1_plots}"
-export GHSL_L2_DIR="${GHSL_L2_DIR:-${PATH3_ROOT}/06_L2_detect}"
-export GHSL_L2_PLOTS_DIR="${GHSL_L2_PLOTS_DIR:-${PATH3_ROOT}/07_L2_plots}"
-export GHSL_CARRIERS_DIR="${GHSL_CARRIERS_DIR:-${PATH3_ROOT}/08_carriers}"
-export GHSL_CUSUM_DIR="${GHSL_CUSUM_DIR:-${PATH3_ROOT}/09_cusum}"
-export GHSL_JSON_DIR="${GHSL_JSON_DIR:-${PATH3_ROOT}/10_atlas_json}"
+export OUT_GH_LOCAL_PCA_DIR="${GHSL_LOCALPCA_DIR}"   # bridge for STEP_GH_C
+# Plot toggles — wired through to _shared/STEP_06_L1_plot.R and
+# _shared/STEP_08_L2_plot.R so the scripts short-circuit if false.
+export MAKE_L1_PLOTS="${MAKE_L1_PLOTS:-true}"
+export MAKE_L2_PLOTS="${MAKE_L2_PLOTS:-true}"
 # Sample-consensus gate thresholds for TR_I (May 2026+).
 export GHSL_CONSENSUS_FRAC_THRESHOLD="${GHSL_CONSENSUS_FRAC_THRESHOLD:-0.8}"
 export GHSL_CONSENSUS_TOL_KB="${GHSL_CONSENSUS_TOL_KB:-100}"
-# Same defensive default for SCRIPT_DIR_THETA — needed for TR_D/E/F/G calls.
+# Defensive defaults for the script dirs we need.
+export SCRIPT_DIR_SHARED="${SCRIPT_DIR_SHARED:-${REPO_ROOT:-$(dirname "${SCRIPT_DIR}")}/_shared}"
 export SCRIPT_DIR_THETA="${SCRIPT_DIR_THETA:-${REPO_ROOT:-$(dirname "${SCRIPT_DIR}")}/local_PCA_MDS_theta_pi}"
 export GHSL_POSTPROCESS_DIR GHSL_PREP_DIR GHSL_MATRICES_DIR \
-       GHSL_LOCALPCA_DIR GHSL_PRECOMP_DIR GHSL_PRECOMP_DENSE_DIR \
+       GHSL_LOCALPCA_DIR GHSL_MDS_DIR GHSL_PRECOMP_DIR GHSL_PRECOMP_DENSE_DIR \
        GHSL_L1_DIR GHSL_L1_PLOTS_DIR GHSL_L2_DIR GHSL_L2_PLOTS_DIR \
        GHSL_CARRIERS_DIR GHSL_CUSUM_DIR GHSL_JSON_DIR \
        GHSL_SCALES \
        GHSL_PCA_SCALE_FULL GHSL_PCA_SCALE_DENSE \
        GHSL_CONSENSUS_FRAC_THRESHOLD GHSL_CONSENSUS_TOL_KB \
-       PRECOMP_DIR SAMPLES_IND RSCRIPT_BIN SCRIPT_DIR SCRIPT_DIR_THETA
+       MAKE_L1_PLOTS MAKE_L2_PLOTS \
+       SLOT_PRECOMP SLOT_PRECOMP_DENSE SLOT_LOCAL_PCA \
+       PATH3_ROOT PATH3_LOCAL_PCA PATH3_PRECOMP PATH3_REGISTRY \
+       PRECOMP_DIR SAMPLES_IND RSCRIPT_BIN SCRIPT_DIR \
+       SCRIPT_DIR_SHARED SCRIPT_DIR_THETA
 
 mkdir -p logs "${GHSL_PREP_DIR}" "${GHSL_MATRICES_DIR}" "${GHSL_LOCALPCA_DIR}" \
          "${GHSL_PRECOMP_DIR}" "${GHSL_PRECOMP_DENSE_DIR}" \
@@ -196,44 +210,47 @@ echo "[$(date)] [${CHROM}] === B local_pca ==="
   --scale        "${GHSL_PCA_SCALE_FULL}" \
   --chrom        "${CHROM}"
 
-# C — MDS + sim_mat + NN smoothing (mode full)
+# C — MDS + sim_mat + NN smoothing (mode full). Output dir derived from
+# SLOT_PRECOMP env (default "04_precomp"); per-chrom .ghsl_precomp.rds
+# lands in ${GHSL_PRECOMP_DIR}, sim_mats/ alongside.
 if [[ ! -s "${GHSL_PRECOMP_DIR}/${CHROM}.ghsl_precomp.rds" ]]; then
   echo "[$(date)] [${CHROM}] === C mds (mode=full) ==="
   "${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_GH_C_mds_compute.R" \
     --chrom      "${CHROM}" \
     --mode       full \
-    --out_subdir "03_precomp"
+    --out_subdir "${SLOT_PRECOMP:-04_precomp}"
 else
   echo "[$(date)] [${CHROM}] precomp already done, skipping C"
 fi
 
-# TR scripts (D-G) operate directly on a precomp + sim_mats and are
-# pipeline-agnostic — we point them at the GHSL precomp.
+# Shared L1/L2 detect+plot scripts (in _shared/) operate directly on a
+# precomp + sim_mats and are pipeline-agnostic — we point them at the GHSL
+# precomp. Plot steps honor MAKE_L1_PLOTS / MAKE_L2_PLOTS.
 GHSL_PRECOMP_F="${GHSL_PRECOMP_DIR}/${CHROM}.ghsl_precomp.rds"
 SIM_NN80="${GHSL_PRECOMP_DIR}/sim_mats/${CHROM}.sim_mat_nn80.rds"
 SIM_NN40="${GHSL_PRECOMP_DIR}/sim_mats/${CHROM}.sim_mat_nn40.rds"
 
-# D — detect L1 boundaries
-echo "[$(date)] [${CHROM}] === D detect_L1 ==="
-"${RSCRIPT_BIN}" "${SCRIPT_DIR_THETA}/STEP_TR_D_detect_L1.R" \
+# D — detect L1 boundaries (_shared/STEP_05_L1_detect.R)
+echo "[$(date)] [${CHROM}] === D L1_detect ==="
+"${RSCRIPT_BIN}" "${SCRIPT_DIR_SHARED}/STEP_05_L1_detect.R" \
   --precomp "${GHSL_PRECOMP_F}" --sim_mat "${SIM_NN80}" \
   --chr "${CHROM}" --outdir "${GHSL_L1_DIR}" \
   --boundary_scan TRUE \
   --boundary_validator_mode grow \
   --boundary_W 5 --boundary_offset 5 --boundary_min_dist 30
 
-# E — plot L1
-echo "[$(date)] [${CHROM}] === E plot_L1 ==="
-"${RSCRIPT_BIN}" "${SCRIPT_DIR_THETA}/STEP_TR_E_plot_L1.R" \
+# E — plot L1 (_shared/STEP_06_L1_plot.R; skipped if MAKE_L1_PLOTS != true)
+echo "[$(date)] [${CHROM}] === E L1_plot (MAKE_L1_PLOTS=${MAKE_L1_PLOTS}) ==="
+"${RSCRIPT_BIN}" "${SCRIPT_DIR_SHARED}/STEP_06_L1_plot.R" \
   --precomp "${GHSL_PRECOMP_F}" --sim_mat "${SIM_NN80}" \
   --catalogue  "${GHSL_L1_DIR}/${CHROM}.L1_envelopes.tsv" \
   --boundaries "${GHSL_L1_DIR}/${CHROM}.L1_boundaries.tsv" \
   --chr "${CHROM}" --outdir "${GHSL_L1_PLOTS_DIR}" \
   --toggle_L1 yes --boundary_filter stable
 
-# F — detect L2 boundaries (inside each L1 envelope)
-echo "[$(date)] [${CHROM}] === F detect_L2 ==="
-"${RSCRIPT_BIN}" "${SCRIPT_DIR_THETA}/STEP_TR_F_detect_L2.R" \
+# F — detect L2 boundaries (_shared/STEP_07_L2_detect.R)
+echo "[$(date)] [${CHROM}] === F L2_detect ==="
+"${RSCRIPT_BIN}" "${SCRIPT_DIR_SHARED}/STEP_07_L2_detect.R" \
   --precomp "${GHSL_PRECOMP_F}" --sim_mat "${SIM_NN40}" \
   --l1_catalogue "${GHSL_L1_DIR}/${CHROM}.L1_envelopes.tsv" \
   --chr "${CHROM}" --outdir "${GHSL_L2_DIR}" \
@@ -245,9 +262,9 @@ echo "[$(date)] [${CHROM}] === F detect_L2 ==="
   --quad_demote_on_fail yes \
   --quad_demote_drift_floor -1.0
 
-# G — plot L2
-echo "[$(date)] [${CHROM}] === G plot_L2 ==="
-"${RSCRIPT_BIN}" "${SCRIPT_DIR_THETA}/STEP_TR_G_plot_L2.R" \
+# G — plot L2 (_shared/STEP_08_L2_plot.R; skipped if MAKE_L2_PLOTS != true)
+echo "[$(date)] [${CHROM}] === G L2_plot (MAKE_L2_PLOTS=${MAKE_L2_PLOTS}) ==="
+"${RSCRIPT_BIN}" "${SCRIPT_DIR_SHARED}/STEP_08_L2_plot.R" \
   --precomp "${GHSL_PRECOMP_F}" --sim_mat "${SIM_NN80}" --sim_mat_l2 "${SIM_NN40}" \
   --l1_catalogue  "${GHSL_L1_DIR}/${CHROM}.L1_envelopes.tsv" \
   --l1_boundaries "${GHSL_L1_DIR}/${CHROM}.L1_boundaries.tsv" \
@@ -315,12 +332,14 @@ echo "${CHROMS}" \
 
 # ---- K — registry merge (once, after all per-chrom finished) ---------------
 # (Script name is STEP_GH_D_merge_registry.R for historical reasons; renamed
-# in the log to K to disambiguate from per-chrom D=detect_L1 above.)
+# in the log to K to disambiguate from per-chrom D=L1_detect above. Output
+# goes to the harmonized 02_dense_registry slot.)
+mkdir -p "${PATH3_REGISTRY}"
 echo ""
 echo "[$(date)] === K merge_registry (genome-wide) ==="
 "${RSCRIPT_BIN}" "${SCRIPT_DIR}/STEP_GH_D_merge_registry.R" \
   --precomp_dir "${GHSL_PRECOMP_DIR}" \
-  --outdir      "${GHSL_PRECOMP_DIR}" \
+  --outdir      "${PATH3_REGISTRY}" \
   || echo "[WARN] K registry merge failed — partial state OK if some chroms FAILed"
 
 echo ""
